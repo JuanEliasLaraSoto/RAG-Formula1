@@ -1,0 +1,5 @@
+# Núcleo: sin dependencias externas (recuperación TF-IDF en Python puro).
+# Opcional, para generación con LLM:
+openai>=1.0.0
+# Opcional, para descargar datos reales de la API de F1:
+requests>=2.31.0
