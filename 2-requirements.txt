@@ -1,8 +1,0 @@
-# Núcleo: sin dependencias externas (recuperación BM25 en Python puro).
-# Opcional, para generación con LLM y recuperación por embeddings:
-openai>=1.0.0
-# Opcional, para descargar datos reales de la API de F1:
-requests>=2.31.0
-# Opcional, para servir el RAG como API REST (uvicorn src.api:app):
-fastapi>=0.110.0
-uvicorn>=0.29.0
