@@ -107,6 +107,51 @@ class BM25Index:
         return scored[:top_k]
 
 
+def cosine(a: list[float], b: list[float]) -> float:
+    """Similitud de coseno entre dos vectores, en Python puro."""
+    dot = sum(x * y for x, y in zip(a, b))
+    na = math.sqrt(sum(x * x for x in a))
+    nb = math.sqrt(sum(x * x for x in b))
+    return dot / (na * nb) if na and nb else 0.0
+
+
+def openai_embed(texts: list[str]) -> list[list[float]]:
+    """Embeddings con OpenAI (text-embedding-3-small por defecto).
+
+    Requiere OPENAI_API_KEY y el paquete openai. Se usa un unico
+    lote por llamada; para bases grandes convendria paginar.
+    """
+    from openai import OpenAI  # import perezoso: dependencia opcional
+
+    client = OpenAI()
+    model = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+    resp = client.embeddings.create(model=model, input=texts)
+    return [item.embedding for item in resp.data]
+
+
+class EmbeddingIndex:
+    """Indice por embeddings: cada documento es un vector y la busqueda
+    es similitud de coseno. Captura sinonimos y parafrasis que BM25 no ve
+    ("maximo ganador" ~ "piloto con mas titulos").
+
+    La funcion de embedding es inyectable para poder probar sin red.
+    """
+
+    def __init__(self, documents: list[Document], embed_fn=None):
+        self.documents = documents
+        self.embed_fn = embed_fn or openai_embed
+        self.vectors = self.embed_fn([d.text for d in documents])
+
+    def search(self, query: str, top_k: int = 5) -> list[tuple[Document, float]]:
+        if not query.strip():
+            return []
+        q_vec = self.embed_fn([query])[0]
+        scored = [(doc, cosine(q_vec, vec)) for doc, vec in zip(self.documents, self.vectors)]
+        scored = [(doc, s) for doc, s in scored if s > 0]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:top_k]
+
+
 # Alias por compatibilidad: antes existia TfidfIndex.
 TfidfIndex = BM25Index
 
@@ -168,13 +213,24 @@ def extractive_answer(results: list[tuple[Document, float]]) -> str:
 
 
 class F1Rag:
-    """Pipeline completo: carga documentos, indexa y responde."""
+    """Pipeline completo: carga documentos, indexa y responde.
 
-    def __init__(self, data_path: str | Path):
+    El recuperador se elige con `retriever` o la variable RAG_RETRIEVER:
+    "bm25" (por defecto, sin dependencias) o "embeddings" (requiere
+    OPENAI_API_KEY y el paquete openai).
+    """
+
+    def __init__(self, data_path: str | Path, retriever: str | None = None):
         self.documents = load_documents(data_path)
         if not self.documents:
             raise ValueError(f"Sin documentos en {data_path}")
-        self.index = TfidfIndex(self.documents)
+        retriever = (retriever or os.environ.get("RAG_RETRIEVER", "bm25")).lower()
+        if retriever == "embeddings":
+            self.index = EmbeddingIndex(self.documents)
+        elif retriever == "bm25":
+            self.index = TfidfIndex(self.documents)
+        else:
+            raise ValueError(f"Recuperador desconocido: {retriever} (usa 'bm25' o 'embeddings')")
 
     def ask(self, question: str, top_k: int = 5) -> dict:
         results = self.index.search(question, top_k=top_k)
