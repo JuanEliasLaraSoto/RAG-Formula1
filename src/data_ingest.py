@@ -76,6 +76,38 @@ def race_documents(season: int) -> list[dict]:
     return docs
 
 
+def champion_documents(season: int) -> list[dict]:
+    """Documento resumen del campeon de pilotos y de constructores del ano:
+    es la pregunta mas habitual y el documento de clasificacion suelto
+    no siempre gana al resto en la busqueda."""
+    docs = []
+    data = fetch(f"{season}/driverStandings")
+    lists = data["StandingsTable"]["StandingsLists"]
+    if lists:
+        s = lists[0]["DriverStandings"][0]
+        drv, con = s["Driver"], s["Constructors"][0]
+        name = f"{drv['givenName']} {drv['familyName']}"
+        text = (
+            f"{name} ({con['name']}) gano el campeonato del mundo de pilotos de "
+            f"Formula 1 de {season} con {s['points']} puntos y {s['wins']} victorias. "
+            f"Es el campeon del mundo de F1 de {season}."
+        )
+        docs.append({"id": f"champion-{season}-drivers", "text": text,
+                     "metadata": {"type": "champion", "season": season, "name": name}})
+    data = fetch(f"{season}/constructorStandings")
+    lists = data["StandingsTable"]["StandingsLists"]
+    if lists:
+        s = lists[0]["ConstructorStandings"][0]
+        con = s["Constructor"]
+        text = (
+            f"{con['name']} gano el campeonato del mundo de constructores de "
+            f"Formula 1 de {season} con {s['points']} puntos y {s['wins']} victorias."
+        )
+        docs.append({"id": f"champion-{season}-constructors", "text": text,
+                     "metadata": {"type": "champion", "season": season, "name": con["name"]}})
+    return docs
+
+
 def standings_documents(season: int) -> list[dict]:
     docs = []
     data = fetch(f"{season}/driverStandings")
@@ -107,7 +139,8 @@ def main() -> None:
     print(f"Descargando datos de la temporada {season} desde {API_BASE} ...", file=sys.stderr)
     docs: list[dict] = []
     for label, fn in [("pilotos", driver_documents), ("equipos", constructor_documents),
-                      ("carreras", race_documents), ("clasificacion", standings_documents)]:
+                      ("carreras", race_documents), ("clasificacion", standings_documents),
+                      ("campeones", champion_documents)]:
         try:
             got = fn(season)
             print(f"  {label}: {len(got)} documentos", file=sys.stderr)
