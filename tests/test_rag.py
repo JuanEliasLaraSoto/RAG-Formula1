@@ -66,6 +66,79 @@ def test_embeddings_index_sin_red():
     assert index.search("", top_k=1) == []
 
 
+def _fake_embed_contador():
+    """Embedding falso e inyectable que cuenta llamadas, para probar el cache."""
+    import math
+
+    def fake_embed(texts):
+        fake_embed.llamadas += len(texts)
+        vectores = []
+        for t in texts:
+            v = [0.0] * 8
+            for tok in tokenize(t):
+                v[hash(tok) % 8] += 1.0
+            n = math.sqrt(sum(x * x for x in v)) or 1.0
+            vectores.append([x / n for x in v])
+        return vectores
+
+    fake_embed.llamadas = 0
+    return fake_embed
+
+
+def test_embeddings_cache_reusa_vectores():
+    import tempfile
+    from rag import EmbeddingIndex
+
+    docs = [Document(id="a", text="Verstappen gano el campeonato 2023"),
+            Document(id="b", text="El DRS permite adelantar abriendo el aleron")]
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = Path(tmp) / "emb.json"
+        fake = _fake_embed_contador()
+        EmbeddingIndex(docs, embed_fn=fake, cache_path=cache)
+        assert fake.llamadas == 2
+        assert cache.exists()
+        # Segunda carga con el mismo cache: no recalcula nada.
+        fake2 = _fake_embed_contador()
+        index2 = EmbeddingIndex(docs, embed_fn=fake2, cache_path=cache)
+        assert fake2.llamadas == 0
+        assert index2.search("quien gano el campeonato 2023", top_k=1)[0][0].id == "a"
+
+
+def test_embeddings_cache_incremental_y_purga():
+    import json
+    import tempfile
+    from rag import EmbeddingIndex
+
+    docs = [Document(id="a", text="Verstappen gano el campeonato 2023"),
+            Document(id="b", text="El DRS permite adelantar abriendo el aleron")]
+    with tempfile.TemporaryDirectory() as tmp:
+        cache = Path(tmp) / "emb.json"
+        fake = _fake_embed_contador()
+        EmbeddingIndex(docs, embed_fn=fake, cache_path=cache)
+        # Un documento nuevo y uno borrado: solo calcula el nuevo y purga el viejo.
+        docs2 = [docs[0], Document(id="c", text="Antonelli se proclamo campeon en Mexico")]
+        fake2 = _fake_embed_contador()
+        EmbeddingIndex(docs2, embed_fn=fake2, cache_path=cache)
+        assert fake2.llamadas == 1
+        guardado = json.loads(cache.read_text(encoding="utf-8"))["vectors"]
+        assert len(guardado) == 2  # el vector del doc borrado se purgo
+        # Un documento editado cambia de texto y se recalcula.
+        docs3 = [docs[0], Document(id="c", text="Antonelli, campeon anticipado 2026")]
+        fake3 = _fake_embed_contador()
+        EmbeddingIndex(docs3, embed_fn=fake3, cache_path=cache)
+        assert fake3.llamadas == 1
+
+
+def test_embedding_cache_path_por_defecto_y_off():
+    import os
+    assert str(F1Rag._embedding_cache_path("data/f1_data.jsonl")).endswith("f1_data.embeddings.json")
+    os.environ["RAG_EMBEDDING_CACHE"] = "off"
+    try:
+        assert F1Rag._embedding_cache_path("data/f1_data.jsonl") is None
+    finally:
+        del os.environ["RAG_EMBEDDING_CACHE"]
+
+
 def test_retriever_desconocido():
     try:
         F1Rag(DATA, retriever="magia")
