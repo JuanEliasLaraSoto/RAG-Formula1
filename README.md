@@ -23,6 +23,10 @@ pregunta ──> recuperacion (BM25 o embeddings) ──> fragmentos relevantes 
      tildes y maneja espanol e ingles.
    - **Embeddings** (`RAG_RETRIEVER=embeddings`): vectores de OpenAI con
      similitud de coseno; captura sinonimos y parafrasis que BM25 no ve.
+     Los vectores se guardan en un cache local (`data/*.embeddings.json`),
+     asi que solo se calculan una vez por documento; al editar o anadir
+     documentos solo se recalculan los nuevos (`RAG_EMBEDDING_CACHE=off`
+     lo desactiva).
 3. **Generacion** (`src/rag.py`): si defines `OPENAI_API_KEY`, un LLM redacta
    la respuesta usando SOLO el contexto recuperado (con instruccion de no
    inventar). Sin clave, devuelve los fragmentos mas relevantes.
@@ -74,7 +78,11 @@ uvicorn src.api:app --reload
 
 ```bash
 python tests/test_rag.py
+python tests/test_data_ingest.py
 ```
+
+Los tests corren solos en cada push con GitHub Actions
+(`.github/workflows/tests.yml`, Python 3.10 y 3.12).
 
 ## Estructura
 
@@ -83,8 +91,10 @@ RAG-Formula1/
 ├── data/
 │   ├── f1_data.jsonl        # temporadas 2021-2026 + historia y reglas
 │   └── sample_data.jsonl    # muestra ligera
+├── .github/workflows/
+│   └── tests.yml            # CI: tests en cada push (GitHub Actions)
 ├── src/
-│   ├── rag.py               # indices BM25 y embeddings + pipeline RAG
+│   ├── rag.py               # indices BM25 y embeddings (con cache) + pipeline RAG
 │   ├── ask.py               # CLI
 │   ├── api.py               # API REST con FastAPI
 │   └── data_ingest.py       # descarga de la API Jolpica
@@ -95,5 +105,5 @@ RAG-Formula1/
 ## Siguientes pasos (ideas para extenderlo)
 
 - Indexar noticias y cronicas de carreras, no solo resultados.
-- Persistir los embeddings en una base vectorial (FAISS/Chroma) para no recalcularlos.
+- Mover el cache de embeddings a una base vectorial (FAISS/Chroma) si la base crece mucho.
 - Anadir citas con la fuente de cada dato en la respuesta redactada.
