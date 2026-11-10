@@ -7,6 +7,7 @@ responde de forma extractiva con los fragmentos más relevantes.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -135,12 +136,59 @@ class EmbeddingIndex:
     ("maximo ganador" ~ "piloto con mas titulos").
 
     La funcion de embedding es inyectable para poder probar sin red.
+
+    Con `cache_path` los vectores se guardan en un JSON local: en la
+    siguiente ejecucion solo se calculan los embeddings de los documentos
+    nuevos o modificados, en vez de recalcular toda la base (ahorro de
+    tiempo y de llamadas a la API). La clave de cada vector es el hash del
+    modelo y del texto, asi que un documento editado se recalcula solo y
+    los vectores de documentos borrados se purgan al guardar.
     """
 
-    def __init__(self, documents: list[Document], embed_fn=None):
+    def __init__(self, documents: list[Document], embed_fn=None, cache_path: str | Path | None = None):
         self.documents = documents
         self.embed_fn = embed_fn or openai_embed
-        self.vectors = self.embed_fn([d.text for d in documents])
+        self.model = os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+        texts = [d.text for d in documents]
+        keys = [self._cache_key(t) for t in texts]
+        cache = self._load_cache(cache_path)
+        self.vectors: list[list[float]] = [[] for _ in texts]
+        missing = []
+        for i, key in enumerate(keys):
+            if key in cache:
+                self.vectors[i] = cache[key]
+            else:
+                missing.append(i)
+        if missing:
+            nuevos = self.embed_fn([texts[i] for i in missing])
+            for i, vec in zip(missing, nuevos):
+                self.vectors[i] = vec
+                cache[keys[i]] = vec
+            self._save_cache(cache_path, cache, set(keys))
+
+    def _cache_key(self, text: str) -> str:
+        return hashlib.sha256(f"{self.model}\n{text}".encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _load_cache(cache_path: str | Path | None) -> dict:
+        if not cache_path:
+            return {}
+        try:
+            data = json.loads(Path(cache_path).read_text(encoding="utf-8"))
+            return data.get("vectors", {}) if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    @staticmethod
+    def _save_cache(cache_path: str | Path | None, cache: dict, valid_keys: set) -> None:
+        if not cache_path:
+            return
+        cache = {k: v for k, v in cache.items() if k in valid_keys}
+        path = Path(cache_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text(json.dumps({"vectors": cache}), encoding="utf-8")
+        tmp.replace(path)  # escritura atomica: nunca deja un cache a medias
 
     def search(self, query: str, top_k: int = 5) -> list[tuple[Document, float]]:
         if not query.strip():
@@ -226,11 +274,25 @@ class F1Rag:
             raise ValueError(f"Sin documentos en {data_path}")
         retriever = (retriever or os.environ.get("RAG_RETRIEVER", "bm25")).lower()
         if retriever == "embeddings":
-            self.index = EmbeddingIndex(self.documents)
+            self.index = EmbeddingIndex(self.documents, cache_path=self._embedding_cache_path(data_path))
         elif retriever == "bm25":
             self.index = TfidfIndex(self.documents)
         else:
             raise ValueError(f"Recuperador desconocido: {retriever} (usa 'bm25' o 'embeddings')")
+
+    @staticmethod
+    def _embedding_cache_path(data_path: str | Path) -> Path | None:
+        """Ruta del cache de embeddings para una base de datos.
+
+        Por defecto, junto a los datos (data/f1_data.embeddings.json).
+        RAG_EMBEDDING_CACHE permite otra ruta, o desactivarlo con "off".
+        """
+        setting = os.environ.get("RAG_EMBEDDING_CACHE", "auto").strip()
+        if setting.lower() in {"off", "no", "0", "false"}:
+            return None
+        if setting and setting.lower() != "auto":
+            return Path(setting)
+        return Path(data_path).with_suffix(".embeddings.json")
 
     def ask(self, question: str, top_k: int = 5) -> dict:
         results = self.index.search(question, top_k=top_k)
