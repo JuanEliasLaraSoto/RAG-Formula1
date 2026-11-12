@@ -53,7 +53,7 @@ def test_embeddings_index_sin_red():
             toks = tokenize(t)
             v = [0.0] * 8
             for tok in toks:
-                v[hash(tok) % 8] += 1.0
+                v[__import__("zlib").crc32(tok.encode()) % 8] += 1.0
             n = math.sqrt(sum(x * x for x in v)) or 1.0
             vectores.append([x / n for x in v])
         return vectores
@@ -76,7 +76,7 @@ def _fake_embed_contador():
         for t in texts:
             v = [0.0] * 8
             for tok in tokenize(t):
-                v[hash(tok) % 8] += 1.0
+                v[__import__("zlib").crc32(tok.encode()) % 8] += 1.0
             n = math.sqrt(sum(x * x for x in v)) or 1.0
             vectores.append([x / n for x in v])
         return vectores
@@ -148,7 +148,7 @@ def _fake_embed_bow():
         for t in texts:
             v = [0.0] * 8
             for tok in tokenize(t):
-                v[hash(tok) % 8] += 1.0
+                v[__import__("zlib").crc32(tok.encode()) % 8] += 1.0
             n = math.sqrt(sum(x * x for x in v)) or 1.0
             vectores.append([x / n for x in v])
         return vectores
