@@ -139,6 +139,66 @@ def test_embedding_cache_path_por_defecto_y_off():
         del os.environ["RAG_EMBEDDING_CACHE"]
 
 
+def _fake_embed_bow():
+    """Embedding falso e inyectable (bolsa de palabras), para probar sin red."""
+    import math
+
+    def fake_embed(texts):
+        vectores = []
+        for t in texts:
+            v = [0.0] * 8
+            for tok in tokenize(t):
+                v[hash(tok) % 8] += 1.0
+            n = math.sqrt(sum(x * x for x in v)) or 1.0
+            vectores.append([x / n for x in v])
+        return vectores
+
+    return fake_embed
+
+
+def test_hybrid_rrf_fusiona_los_dos_motores():
+    from rag import HybridIndex
+
+    docs = [Document(id="bm25", text="campeonato de pilotos 2023 verstappen"),
+            Document(id="emb", text="ganador maximo del mundo")]
+    # Embeddings controlados: "emb" es el mas parecido a la consulta para los
+    # vectores, pero BM25 solo encuentra "bm25" (comparte terminos exactos).
+    tabla = {"quien gano el campeonato de pilotos": [1.0, 0.0],
+             "campeonato de pilotos 2023 verstappen": [0.7, 0.3],
+             "ganador maximo del mundo": [1.0, 0.0]}
+    index = HybridIndex(docs, embed_fn=lambda texts: [tabla[t] for t in texts])
+    query = "quien gano el campeonato de pilotos"
+    # Cada motor por separado solo acierta con su documento.
+    assert [d.id for d, _ in index.bm25.search(query)] == ["bm25"]
+    assert [d.id for d, _ in index.embeddings.search(query)][0] == "emb"
+    # La fusion RRF junta ambos y da prioridad al que esta en las dos listas.
+    ids = [d.id for d, _ in index.search(query)]
+    assert ids == ["bm25", "emb"]
+    # Sin terminos utiles, no hay resultados.
+    assert index.search("el la de") == []
+
+
+def test_hybrid_en_f1rag_sin_red():
+    import os
+    os.environ["RAG_EMBEDDING_CACHE"] = "off"
+    try:
+        rag = F1Rag(DATA, retriever="hybrid", embed_fn=_fake_embed_bow())
+        out = rag.ask("que es el DRS")
+        assert any("DRS" in s["text"] for s in out["sources"])
+    finally:
+        del os.environ["RAG_EMBEDDING_CACHE"]
+
+
+def test_prompt_y_respuesta_con_fuentes():
+    from rag import SYSTEM_PROMPT, build_prompt, extractive_answer
+
+    doc = Document(id="driver-verstappen", text="Verstappen gano en 2023")
+    prompt = build_prompt("quien gano", [(doc, 1.0)])
+    assert "fuente: driver-verstappen" in prompt
+    assert "[Fragmento" in SYSTEM_PROMPT
+    assert "driver-verstappen" in extractive_answer([(doc, 1.0)])
+
+
 def test_retriever_desconocido():
     try:
         F1Rag(DATA, retriever="magia")
