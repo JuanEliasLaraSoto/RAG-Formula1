@@ -18,7 +18,7 @@ pregunta ──> recuperacion (BM25 o embeddings) ──> fragmentos relevantes 
    de las temporadas 2021-2026 (pilotos, equipos, ganadores de cada carrera
    y clasificaciones) mas records historicos y reglas; `data/sample_data.jsonl`
    es una muestra ligera.
-2. **Recuperacion** (`src/rag.py`): dos motores intercambiables.
+2. **Recuperacion** (`src/rag.py`): tres motores intercambiables.
    - **BM25** (por defecto): en Python puro, sin dependencias. Normaliza
      tildes y maneja espanol e ingles.
    - **Embeddings** (`RAG_RETRIEVER=embeddings`): vectores de OpenAI con
@@ -27,9 +27,14 @@ pregunta ──> recuperacion (BM25 o embeddings) ──> fragmentos relevantes 
      asi que solo se calculan una vez por documento; al editar o anadir
      documentos solo se recalculan los nuevos (`RAG_EMBEDDING_CACHE=off`
      lo desactiva).
+   - **Hibrido** (`RAG_RETRIEVER=hybrid`): fusiona BM25 y embeddings con
+     RRF (reciprocal rank fusion), asi combina la precision de los terminos
+     exactos con los sinonimos de los vectores, sin calibrar puntuaciones.
 3. **Generacion** (`src/rag.py`): si defines `OPENAI_API_KEY`, un LLM redacta
    la respuesta usando SOLO el contexto recuperado (con instruccion de no
-   inventar). Sin clave, devuelve los fragmentos mas relevantes.
+   inventar) y cita de que fragmento sale cada dato (`[Fragmento N]`,
+   identificado por el id de su documento). Sin clave, la respuesta
+   extractiva tambien indica la fuente de cada fragmento.
 4. **Datos reales** (`src/data_ingest.py`): descarga pilotos, equipos,
    carreras y clasificaciones de cualquier temporada desde la
    [API Jolpica](https://api.jolpi.ca/ergast/) (sucesora de Ergast, gratuita).
@@ -63,6 +68,7 @@ pip install openai
 cp .env.example .env   # edita y pega tu OPENAI_API_KEY
 python src/ask.py "resume el palmares de Fernando Alonso"
 python src/ask.py --retriever embeddings "que piloto ha ganado mas titulos?"
+python src/ask.py --retriever hybrid "quien es el maximo ganador de la F1?"
 ```
 
 ## API REST (opcional)
@@ -106,4 +112,3 @@ RAG-Formula1/
 
 - Indexar noticias y cronicas de carreras, no solo resultados.
 - Mover el cache de embeddings a una base vectorial (FAISS/Chroma) si la base crece mucho.
-- Anadir citas con la fuente de cada dato en la respuesta redactada.
