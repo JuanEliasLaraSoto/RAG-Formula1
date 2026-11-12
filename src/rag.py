@@ -200,6 +200,42 @@ class EmbeddingIndex:
         return scored[:top_k]
 
 
+class HybridIndex:
+    """Combina BM25 y embeddings con fusion de rango reciproco (RRF).
+
+    BM25 acierta con terminos exactos ("GP de Monaco 2024") y los
+    embeddings con sinonimos y parafrasis ("maximo ganador"); el hibrido
+    junta ambos mundos. RRF suma 1/(k + rango) de cada lista, asi que no
+    hace falta calibrar las escalas de puntuacion de cada motor: un
+    documento bien posicionado en las dos listas queda el primero, y uno
+    que solo ve un motor puede entrar si el otro no lo encontro.
+
+    Toma los `candidatos` primeros de cada motor y devuelve el top_k
+    fusionado. La puntuacion devuelta es la suma RRF (sin unidad).
+    """
+
+    def __init__(self, documents: list[Document], embed_fn=None,
+                 cache_path: str | Path | None = None, rrf_k: int = 60,
+                 candidatos: int = 10):
+        self.bm25 = BM25Index(documents)
+        self.embeddings = EmbeddingIndex(documents, embed_fn=embed_fn, cache_path=cache_path)
+        self.rrf_k = rrf_k
+        self.candidatos = candidatos
+
+    def search(self, query: str, top_k: int = 5) -> list[tuple[Document, float]]:
+        if not tokenize(query):
+            return []
+        fusion: dict[str, float] = {}
+        docs: dict[str, Document] = {}
+        for resultados in (self.bm25.search(query, top_k=self.candidatos),
+                           self.embeddings.search(query, top_k=self.candidatos)):
+            for rango, (doc, _score) in enumerate(resultados):
+                fusion[doc.id] = fusion.get(doc.id, 0.0) + 1.0 / (self.rrf_k + rango + 1)
+                docs[doc.id] = doc
+        orden = sorted(fusion.items(), key=lambda x: x[1], reverse=True)
+        return [(docs[doc_id], score) for doc_id, score in orden[:top_k]]
+
+
 # Alias por compatibilidad: antes existia TfidfIndex.
 TfidfIndex = BM25Index
 
@@ -220,13 +256,18 @@ def load_documents(path: str | Path) -> list[Document]:
 SYSTEM_PROMPT = (
     "Eres un asistente experto en Formula 1. Responde SOLO con la informacion "
     "del contexto proporcionado. Si el contexto no contiene la respuesta, di "
-    "claramente que no tienes ese dato. Responde en espanol, de forma concisa."
+    "claramente que no tienes ese dato. Responde en espanol, de forma concisa. "
+    "Cuando uses un dato de un fragmento, citalo entre corchetes al final de la "
+    "frase, p. ej. [Fragmento 2]."
 )
 
 
 def build_prompt(question: str, results: list[tuple[Document, float]]) -> str:
+    # Cada fragmento lleva el id de su documento (fuente) para que la
+    # respuesta redactada pueda citar de donde sale cada dato.
     context = "\n\n".join(
-        f"[Fragmento {i}] {doc.text}" for i, (doc, _) in enumerate(results, 1)
+        f"[Fragmento {i}] (fuente: {doc.id}) {doc.text}"
+        for i, (doc, _) in enumerate(results, 1)
     )
     return (
         f"Contexto recuperado:\n{context}\n\n"
@@ -252,10 +293,10 @@ def generate_with_llm(prompt: str) -> str:
 
 
 def extractive_answer(results: list[tuple[Document, float]]) -> str:
-    """Respuesta sin LLM: devuelve los fragmentos recuperados."""
+    """Respuesta sin LLM: devuelve los fragmentos recuperados, con su fuente."""
     lines = ["No tengo un LLM configurado, pero esto es lo mas relevante que encontre:\n"]
     for i, (doc, score) in enumerate(results, 1):
-        lines.append(f"{i}. {doc.text}")
+        lines.append(f"{i}. {doc.text} (fuente: {doc.id})")
     lines.append("\n(Configura OPENAI_API_KEY para respuestas redactadas.)")
     return "\n".join(lines)
 
@@ -264,21 +305,28 @@ class F1Rag:
     """Pipeline completo: carga documentos, indexa y responde.
 
     El recuperador se elige con `retriever` o la variable RAG_RETRIEVER:
-    "bm25" (por defecto, sin dependencias) o "embeddings" (requiere
-    OPENAI_API_KEY y el paquete openai).
+    "bm25" (por defecto, sin dependencias), "embeddings" o "hybrid"
+    (estos dos requieren OPENAI_API_KEY y el paquete openai).
     """
 
-    def __init__(self, data_path: str | Path, retriever: str | None = None):
+    def __init__(self, data_path: str | Path, retriever: str | None = None, embed_fn=None):
         self.documents = load_documents(data_path)
         if not self.documents:
             raise ValueError(f"Sin documentos en {data_path}")
         retriever = (retriever or os.environ.get("RAG_RETRIEVER", "bm25")).lower()
         if retriever == "embeddings":
-            self.index = EmbeddingIndex(self.documents, cache_path=self._embedding_cache_path(data_path))
+            self.index = EmbeddingIndex(self.documents, embed_fn=embed_fn,
+                                        cache_path=self._embedding_cache_path(data_path))
+        elif retriever == "hybrid":
+            self.index = HybridIndex(self.documents, embed_fn=embed_fn,
+                                     cache_path=self._embedding_cache_path(data_path))
         elif retriever == "bm25":
             self.index = TfidfIndex(self.documents)
         else:
-            raise ValueError(f"Recuperador desconocido: {retriever} (usa 'bm25' o 'embeddings')")
+            raise ValueError(
+                f"Recuperador desconocido: {retriever} "
+                "(usa 'bm25', 'embeddings' u 'hybrid')"
+            )
 
     @staticmethod
     def _embedding_cache_path(data_path: str | Path) -> Path | None:
