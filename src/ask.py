@@ -31,7 +31,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Pregunta al RAG de F1.")
     parser.add_argument("question", nargs="?", help="Pregunta (si se omite, modo interactivo).")
     parser.add_argument("--data", default="data/f1_data.jsonl", help="JSONL con el conocimiento.")
-    parser.add_argument("--retriever", choices=["bm25", "embeddings"], default=None,
+    parser.add_argument("--retriever", choices=["bm25", "embeddings", "hybrid"], default=None,
                         help="Recuperador (por defecto RAG_RETRIEVER o bm25).")
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--json", action="store_true", help="Salida JSON con fuentes.")
