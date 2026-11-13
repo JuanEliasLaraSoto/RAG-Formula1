@@ -20,7 +20,10 @@ pregunta ──> recuperacion (BM25 o embeddings) ──> fragmentos relevantes 
    es una muestra ligera.
 2. **Recuperacion** (`src/rag.py`): tres motores intercambiables.
    - **BM25** (por defecto): en Python puro, sin dependencias. Normaliza
-     tildes y maneja espanol e ingles.
+     tildes, maneja espanol e ingles, entiende sinonimos del dominio
+     ("mundial" ~ "campeonato" ~ "titulo", "escuderia" ~ "equipo",
+     "GP" ~ "Grand Prix") y, si la pregunta menciona un ano, da prioridad
+     a los documentos de esa temporada.
    - **Embeddings** (`RAG_RETRIEVER=embeddings`): vectores de OpenAI con
      similitud de coseno; captura sinonimos y parafrasis que BM25 no ve.
      Los vectores se guardan en un cache local (`data/*.embeddings.json`),
@@ -105,7 +108,8 @@ RAG-Formula1/
 │   ├── api.py               # API REST con FastAPI
 │   └── data_ingest.py       # descarga de la API Jolpica
 └── tests/
-    └── test_rag.py
+    ├── test_rag.py
+    └── test_data_ingest.py
 ```
 
 ## Siguientes pasos (ideas para extenderlo)
