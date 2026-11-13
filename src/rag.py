@@ -1,4 +1,4 @@
-"""Núcleo del RAG: recuperación TF-IDF + generación opcional con LLM.
+"""Núcleo del RAG: recuperación (BM25, embeddings o híbrida) + generación opcional con LLM.
 
 Sin dependencias externas. Si hay OPENAI_API_KEY, las respuestas se
 generan con un LLM usando solo el contexto recuperado; si no, se
@@ -45,6 +45,34 @@ def tokenize(text: str) -> list[str]:
     return [stem(t) for t in normalize(text).split() if t and t not in STOPWORDS]
 
 
+# Sinonimos del dominio de F1, sobre tokens ya normalizados y con stem.
+# Se aplican SOLO a la consulta (los documentos se indexan tal cual): un
+# sinonimo encontrado suma con peso reducido, asi matiza sin sustituir al
+# termino exacto.
+_RAW_SYNONYMS = {
+    "mundial": ["campeonato", "titulo"],
+    "campeonato": ["mundial", "titulo"],
+    "titulo": ["campeonato", "mundial"],
+    "escuderia": ["equipo", "constructor"],
+    "equipo": ["escuderia", "constructor"],
+    "constructor": ["equipo", "escuderia"],
+    "gp": ["grand", "prix"],
+}
+SYNONYMS = {stem(k): [stem(v) for v in vals] for k, vals in _RAW_SYNONYMS.items()}
+SYNONYM_WEIGHT = 0.6
+
+# Ajuste por temporada: si la consulta menciona un ano, los documentos con
+# metadata de esa temporada puntuan mas y los de otras temporadas, menos.
+SEASON_BOOST = 1.5
+SEASON_DAMP = 0.7
+_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def extract_years(text: str) -> set[str]:
+    """Anos (19xx/20xx) mencionados en un texto, como strings."""
+    return set(_YEAR_RE.findall(normalize(text)))
+
+
 @dataclass
 class Document:
     """Un fragmento de conocimiento indexable."""
@@ -88,22 +116,38 @@ class BM25Index:
         q_terms = set(tokenize(query))
         if not q_terms:
             return []
+        years = extract_years(query)
+        # Expansion de sinonimos de la consulta: el termino original pesa 1.0
+        # y cada sinonimo un peso reducido.
+        weighted = {t: 1.0 for t in q_terms}
+        for term in q_terms:
+            for syn in SYNONYMS.get(term, ()):
+                weighted.setdefault(syn, SYNONYM_WEIGHT)
         scored = []
         for doc, tf, dl in zip(self.documents, self.tf, self.doc_len):
             score = 0.0
             matched = 0
-            for tok in q_terms:
+            for tok, weight in weighted.items():
                 freq = tf.get(tok, 0)
                 if not freq:
                     continue
-                matched += 1
+                if tok in q_terms:
+                    matched += 1
                 denom = freq + self.k1 * (1 - self.b + self.b * dl / self.avgdl)
-                score += self._idf(tok) * (freq * (self.k1 + 1)) / denom
+                score += weight * self._idf(tok) * (freq * (self.k1 + 1)) / denom
             if score > 0:
-                # Bonus de cobertura: premia documentos que cubren mas
-                # terminos distintos de la consulta.
+                # Cobertura: un documento que no cubre todos los terminos
+                # originales de la consulta se penaliza en proporcion, asi
+                # un sinonimo suelto no adelanta a una coincidencia plena.
                 coverage = matched / len(q_terms)
-                scored.append((doc, score * math.sqrt(coverage)))
+                score *= coverage
+                # Ajuste por temporada: con un ano en la consulta, los
+                # documentos de esa temporada suben y los de otras bajan.
+                if years:
+                    season = str(doc.metadata.get("season", ""))
+                    if season:
+                        score *= SEASON_BOOST if season in years else SEASON_DAMP
+                scored.append((doc, score))
         scored.sort(key=lambda x: x[1], reverse=True)
         return scored[:top_k]
 
