@@ -236,6 +236,71 @@ def test_api_si_fastapi_instalado():
     assert "answer" in body and body["sources"]
 
 
+
+
+def test_sinonimos_mundial_campeonato():
+    # "mundial" debe encontrar documentos que solo dicen "campeonato".
+    from rag import BM25Index
+
+    docs = [Document(id="champ", text="Max Verstappen gano el campeonato de pilotos de 2023.",
+                     metadata={"season": 2023}),
+            Document(id="otro", text="El reglamento de 2023 limita el numero de motores.",
+                     metadata={"season": 2023})]
+    index = BM25Index(docs)
+    results = index.search("quien gano el mundial 2023", top_k=1)
+    assert results and results[0][0].id == "champ"
+
+
+def test_sinonimos_equipo_escuderia_y_gp():
+    from rag import BM25Index
+
+    docs = [Document(id="equipo", text="Ferrari es un equipo italiano de Formula 1."),
+            Document(id="carrera", text="El Monaco Grand Prix se corre en Montecarlo.")]
+    index = BM25Index(docs)
+    assert index.search("que escuderia es Ferrari", top_k=1)[0][0].id == "equipo"
+    assert index.search("donde es el GP de Monaco", top_k=1)[0][0].id == "carrera"
+
+
+def test_boost_por_temporada():
+    from rag import BM25Index
+
+    docs = [Document(id="y2023", text="El campeon de pilotos celebra su titulo.",
+                     metadata={"season": 2023}),
+            Document(id="y2024", text="El campeon de pilotos celebra su titulo.",
+                     metadata={"season": 2024})]
+    index = BM25Index(docs)
+    assert index.search("campeon de pilotos 2024", top_k=1)[0][0].id == "y2024"
+    assert index.search("campeon de pilotos 2023", top_k=1)[0][0].id == "y2023"
+    # Sin ano en la consulta el orden no cambia (empate: gana el primero).
+    assert index.search("campeon de pilotos", top_k=1)[0][0].id == "y2023"
+    # Los documentos sin metadata de temporada no se penalizan.
+    docs2 = [Document(id="reglas", text="El campeon suma puntos en cada gran premio."),
+             Document(id="y2023b", text="El campeon de 2023 fue Verstappen.",
+                      metadata={"season": 2023})]
+    index2 = BM25Index(docs2)
+    ids = [d.id for d, _ in index2.search("campeon 2022")]
+    assert "reglas" in ids
+
+
+def test_extract_years():
+    from rag import extract_years
+
+    assert extract_years("quien gano en 2024 y 2023?") == {"2023", "2024"}
+    assert extract_years("que es el DRS") == set()
+
+
+def test_mundial_en_datos_reales():
+    # Con el corpus real, "mundial <ano>" debe dar un documento de campeon
+    # de esa temporada (no una carrera ni una clasificacion).
+    real = DATA.parent / "f1_data.jsonl"
+    if not real.exists():
+        return
+    rag = F1Rag(real)
+    r = rag.index.search("quien gano el mundial de pilotos 2024", top_k=1)
+    assert r and r[0][0].id in {"champion-2024-drivers", "season-2024-champion"}, r[0][0].id
+    assert "Verstappen" in r[0][0].text
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
