@@ -88,10 +88,25 @@ uvicorn src.api:app --reload
 ```bash
 python tests/test_rag.py
 python tests/test_data_ingest.py
+python tests/test_evaluate.py
 ```
 
 Los tests corren solos en cada push con GitHub Actions
 (`.github/workflows/tests.yml`, Python 3.10 y 3.12).
+
+## Evaluacion del recuperador
+
+`src/evaluate.py` mide la calidad de la recuperacion contra un conjunto de
+preguntas de referencia (`data/eval_questions.json`, cada una con los ids de
+documentos que la responden): informa de hit@1, hit@k y MRR, y marca las
+preguntas que fallan. Sirve para comprobar que un cambio en el recuperador
+no rompe nada.
+
+```bash
+python src/evaluate.py                     # corpus real, BM25
+python src/evaluate.py --retriever hybrid  # requiere OPENAI_API_KEY
+python src/evaluate.py --fail-under 0.7    # falla si hit@1 < 70%
+```
 
 ## Estructura
 
@@ -99,17 +114,20 @@ Los tests corren solos en cada push con GitHub Actions
 RAG-Formula1/
 ├── data/
 │   ├── f1_data.jsonl        # temporadas 2021-2026 + historia y reglas
-│   └── sample_data.jsonl    # muestra ligera
+│   ├── sample_data.jsonl    # muestra ligera
+│   └── eval_questions.json  # preguntas de referencia para evaluar
 ├── .github/workflows/
 │   └── tests.yml            # CI: tests en cada push (GitHub Actions)
 ├── src/
 │   ├── rag.py               # indices BM25 y embeddings (con cache) + pipeline RAG
 │   ├── ask.py               # CLI
+│   ├── evaluate.py          # evaluacion del recuperador (hit@k, MRR)
 │   ├── api.py               # API REST con FastAPI
 │   └── data_ingest.py       # descarga de la API Jolpica
 └── tests/
     ├── test_rag.py
-    └── test_data_ingest.py
+    ├── test_data_ingest.py
+    └── test_evaluate.py
 ```
 
 ## Siguientes pasos (ideas para extenderlo)
