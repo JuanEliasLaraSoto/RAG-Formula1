@@ -20,3 +20,5 @@ jobs:
         run: python tests/test_rag.py
       - name: Tests de ingesta de datos
         run: python tests/test_data_ingest.py
+      - name: Tests del evaluador
+        run: python tests/test_evaluate.py
