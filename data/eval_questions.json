@@ -1,0 +1,22 @@
+[
+  {"question": "quien gano el campeonato de pilotos 2024",
+   "expected": ["champion-2024-drivers", "season-2024-champion"]},
+  {"question": "que escuderia gano el mundial 2024",
+   "expected": ["season-2024-constructors", "champion-2024-constructors"]},
+  {"question": "quien es el piloto con mas titulos",
+   "expected": ["hist-hamilton", "hist-schumacher"]},
+  {"question": "quien gano el GP de Monaco 2024",
+   "expected": ["race-2024-r8"]},
+  {"question": "cuantos puntos da ganar una carrera",
+   "expected": ["rules-points"]},
+  {"question": "que es el DRS",
+   "expected": ["rules-drs"]},
+  {"question": "quien gano el campeonato de pilotos 2026",
+   "expected": ["champion-2026-drivers"]},
+  {"question": "como va el campeonato de constructores 2026",
+   "expected": ["champion-2026-constructors"]},
+  {"question": "donde se corre el gran premio de monaco",
+   "expected": ["venues-monaco"]},
+  {"question": "quien gano el mundial de 2023",
+   "expected": ["champion-2023-drivers", "season-2023-champion"]}
+]
