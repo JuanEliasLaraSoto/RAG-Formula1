@@ -22,6 +22,8 @@ el la los las un una unos unas de del al a en con por para sin sobre entre
 y o u ni que se su sus es son fue fueron ser estar haber este esta estos estas
 como mas muy ya lo le les me te nos os mi tu yo el ella ellos ellas
 the a an and or of to in on for with by is are was were be been at from as it its
+quien quienes cual cuales cuanto cuanta cuantos cuantas donde cuando cuyo cuya
+he has ha han hemos habeis
 """.split())
 
 
@@ -50,13 +52,18 @@ def tokenize(text: str) -> list[str]:
 # sinonimo encontrado suma con peso reducido, asi matiza sin sustituir al
 # termino exacto.
 _RAW_SYNONYMS = {
-    "mundial": ["campeonato", "titulo"],
+    "mundial": ["campeonato", "titulo", "mundo"],
     "campeonato": ["mundial", "titulo"],
     "titulo": ["campeonato", "mundial"],
     "escuderia": ["equipo", "constructor"],
     "equipo": ["escuderia", "constructor"],
     "constructor": ["equipo", "escuderia"],
     "gp": ["grand", "prix"],
+    "ganar": ["victoria", "ganador", "triunfo", "gano"],
+    "gano": ["victoria", "ganador", "triunfo", "ganar"],
+    "victoria": ["ganar", "gano", "ganador", "triunfo"],
+    "ganador": ["ganar", "gano", "victoria", "vencedor"],
+    "ganado": ["victoria", "triunfo", "gano", "ganar", "ganador"],
 }
 SYNONYMS = {stem(k): [stem(v) for v in vals] for k, vals in _RAW_SYNONYMS.items()}
 SYNONYM_WEIGHT = 0.6
