@@ -20,10 +20,12 @@ pregunta ──> recuperacion (BM25 o embeddings) ──> fragmentos relevantes 
    es una muestra ligera.
 2. **Recuperacion** (`src/rag.py`): tres motores intercambiables.
    - **BM25** (por defecto): en Python puro, sin dependencias. Normaliza
-     tildes, maneja espanol e ingles, entiende sinonimos del dominio
+     tildes, maneja espanol e ingles, ignora las palabras de pregunta
+     ("quien", "cuanto", "ha"...), entiende sinonimos del dominio
      ("mundial" ~ "campeonato" ~ "titulo", "escuderia" ~ "equipo",
-     "GP" ~ "Grand Prix") y, si la pregunta menciona un ano, da prioridad
-     a los documentos de esa temporada.
+     "GP" ~ "Grand Prix", "gano" ~ "victoria" ~ "triunfo") y, si la
+     pregunta menciona un ano, da prioridad a los documentos de esa
+     temporada.
    - **Embeddings** (`RAG_RETRIEVER=embeddings`): vectores de OpenAI con
      similitud de coseno; captura sinonimos y parafrasis que BM25 no ve.
      Los vectores se guardan en un cache local (`data/*.embeddings.json`),
@@ -100,7 +102,7 @@ Los tests corren solos en cada push con GitHub Actions
 preguntas de referencia (`data/eval_questions.json`, cada una con los ids de
 documentos que la responden): informa de hit@1, hit@k y MRR, y marca las
 preguntas que fallan. Sirve para comprobar que un cambio en el recuperador
-no rompe nada.
+no rompe nada (referencia actual: hit@1 100%, hit@5 100%, MRR 1.000).
 
 ```bash
 python src/evaluate.py                     # corpus real, BM25
