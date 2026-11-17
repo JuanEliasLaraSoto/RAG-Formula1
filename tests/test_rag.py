@@ -160,12 +160,12 @@ def test_hybrid_rrf_fusiona_los_dos_motores():
     from rag import HybridIndex
 
     docs = [Document(id="bm25", text="campeonato de pilotos 2023 verstappen"),
-            Document(id="emb", text="ganador maximo del mundo")]
+            Document(id="emb", text="el mas grande de la historia")]
     # Embeddings controlados: "emb" es el mas parecido a la consulta para los
     # vectores, pero BM25 solo encuentra "bm25" (comparte terminos exactos).
     tabla = {"quien gano el campeonato de pilotos": [1.0, 0.0],
              "campeonato de pilotos 2023 verstappen": [0.7, 0.3],
-             "ganador maximo del mundo": [1.0, 0.0]}
+             "el mas grande de la historia": [1.0, 0.0]}
     index = HybridIndex(docs, embed_fn=lambda texts: [tabla[t] for t in texts])
     query = "quien gano el campeonato de pilotos"
     # Cada motor por separado solo acierta con su documento.
@@ -299,6 +299,27 @@ def test_mundial_en_datos_reales():
     r = rag.index.search("quien gano el mundial de pilotos 2024", top_k=1)
     assert r and r[0][0].id in {"champion-2024-drivers", "season-2024-champion"}, r[0][0].id
     assert "Verstappen" in r[0][0].text
+
+
+
+
+def test_stopwords_interrogativas_y_auxiliares():
+    # Las palabras de pregunta y los auxiliares no deben actuar como terminos.
+    tokens = tokenize("quien ha ganado el mundial de 2023")
+    for w in ("quien", "ha", "el", "de"):
+        assert w not in tokens
+    assert "ganado" in tokens and "mundial" in tokens and "2023" in tokens
+
+
+def test_cluster_victoria_en_sinonimos():
+    # "gano" en la consulta encuentra documentos que hablan de "victorias".
+    from rag import BM25Index
+
+    docs = [Document(id="record", text="Tiene 105 victorias y 104 poles en su carrera."),
+            Document(id="otro", text="El reglamento tecnico limita el aleron.")]
+    index = BM25Index(docs)
+    results = index.search("cuantas carreras gano", top_k=1)
+    assert results and results[0][0].id == "record"
 
 
 if __name__ == "__main__":
