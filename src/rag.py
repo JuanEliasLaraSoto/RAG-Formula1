@@ -80,6 +80,54 @@ def extract_years(text: str) -> set[str]:
     return set(_YEAR_RE.findall(normalize(text)))
 
 
+
+def diversify_groups(scored: list, top_k: int, max_per_group: int = 2) -> list:
+    """Variedad en el top-k: como mucho `max_per_group` documentos del mismo
+    grupo (tipo de documento + temporada de su metadata).
+
+    La base tiene series de documentos casi identicos (p. ej. una ficha por
+    piloto y temporada): sin limite, una consulta amplia llenaba el top-k
+    con la misma plantilla repetida y el LLM recibia contexto redundante.
+    Con el limite, el ranking se recorre en orden y, una vez lleno el cupo
+    de un grupo, se pasa al mejor documento de OTRO grupo; si no hay
+    suficientes grupos distintos, se rellena con los descartados en su
+    orden original. Los documentos sin tipo+temporada nunca se limitan.
+    El primer puesto nunca cambia y el orden por relevancia se respeta
+    dentro de cada grupo.
+    """
+    if not scored:
+        return []
+
+    def group(doc) -> object:
+        t = doc.metadata.get("type")
+        s = doc.metadata.get("season")
+        return (t, s) if t is not None and s is not None else ("__unico__", doc.id)
+
+    selected = []
+    deferred = []
+    counts: dict = {}
+    for doc, s in scored:
+        g = group(doc)
+        if counts.get(g, 0) < max_per_group:
+            selected.append((doc, s))
+            counts[g] = counts.get(g, 0) + 1
+        else:
+            deferred.append((doc, s))
+        if len(selected) == top_k:
+            break
+    if len(selected) < top_k:
+        selected.extend(deferred[: top_k - len(selected)])
+    return selected
+
+
+def diversify_enabled(explicit: bool | None) -> bool:
+    """Diversificacion MMR activa por defecto; RAG_DIVERSIFY=off la quita."""
+    if explicit is not None:
+        return explicit
+    setting = os.environ.get("RAG_DIVERSIFY", "on").strip().lower()
+    return setting not in {"off", "no", "0", "false"}
+
+
 @dataclass
 class Document:
     """Un fragmento de conocimiento indexable."""
@@ -119,7 +167,8 @@ class BM25Index:
         df = self.df.get(token, 0)
         return math.log(1 + (self.n_docs - df + 0.5) / (df + 0.5))
 
-    def search(self, query: str, top_k: int = 5) -> list[tuple[Document, float]]:
+    def search(self, query: str, top_k: int = 5,
+               diversify: bool | None = None) -> list[tuple[Document, float]]:
         q_terms = set(tokenize(query))
         if not q_terms:
             return []
@@ -156,6 +205,8 @@ class BM25Index:
                         score *= SEASON_BOOST if season in years else SEASON_DAMP
                 scored.append((doc, score))
         scored.sort(key=lambda x: x[1], reverse=True)
+        if diversify_enabled(diversify):
+            return diversify_groups(scored, top_k)
         return scored[:top_k]
 
 
@@ -241,13 +292,16 @@ class EmbeddingIndex:
         tmp.write_text(json.dumps({"vectors": cache}), encoding="utf-8")
         tmp.replace(path)  # escritura atomica: nunca deja un cache a medias
 
-    def search(self, query: str, top_k: int = 5) -> list[tuple[Document, float]]:
+    def search(self, query: str, top_k: int = 5,
+               diversify: bool | None = None) -> list[tuple[Document, float]]:
         if not query.strip():
             return []
         q_vec = self.embed_fn([query])[0]
         scored = [(doc, cosine(q_vec, vec)) for doc, vec in zip(self.documents, self.vectors)]
         scored = [(doc, s) for doc, s in scored if s > 0]
         scored.sort(key=lambda x: x[1], reverse=True)
+        if diversify_enabled(diversify):
+            return diversify_groups(scored, top_k)
         return scored[:top_k]
 
 
@@ -273,18 +327,22 @@ class HybridIndex:
         self.rrf_k = rrf_k
         self.candidatos = candidatos
 
-    def search(self, query: str, top_k: int = 5) -> list[tuple[Document, float]]:
+    def search(self, query: str, top_k: int = 5,
+               diversify: bool | None = None) -> list[tuple[Document, float]]:
         if not tokenize(query):
             return []
         fusion: dict[str, float] = {}
         docs: dict[str, Document] = {}
-        for resultados in (self.bm25.search(query, top_k=self.candidatos),
-                           self.embeddings.search(query, top_k=self.candidatos)):
+        for resultados in (self.bm25.search(query, top_k=self.candidatos, diversify=False),
+                           self.embeddings.search(query, top_k=self.candidatos, diversify=False)):
             for rango, (doc, _score) in enumerate(resultados):
                 fusion[doc.id] = fusion.get(doc.id, 0.0) + 1.0 / (self.rrf_k + rango + 1)
                 docs[doc.id] = doc
         orden = sorted(fusion.items(), key=lambda x: x[1], reverse=True)
-        return [(docs[doc_id], score) for doc_id, score in orden[:top_k]]
+        fused = [(docs[doc_id], score) for doc_id, score in orden]
+        if diversify_enabled(diversify):
+            return diversify_groups(fused, top_k)
+        return fused[:top_k]
 
 
 # Alias por compatibilidad: antes existia TfidfIndex.
@@ -393,8 +451,9 @@ class F1Rag:
             return Path(setting)
         return Path(data_path).with_suffix(".embeddings.json")
 
-    def ask(self, question: str, top_k: int = 5) -> dict:
-        results = self.index.search(question, top_k=top_k)
+    def ask(self, question: str, top_k: int = 5,
+            diversify: bool | None = None) -> dict:
+        results = self.index.search(question, top_k=top_k, diversify=diversify)
         if not results:
             return {
                 "answer": "No encontre nada relevante en la base de conocimiento.",
