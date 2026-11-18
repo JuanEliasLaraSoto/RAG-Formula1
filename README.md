@@ -25,7 +25,10 @@ pregunta ──> recuperacion (BM25 o embeddings) ──> fragmentos relevantes 
      ("mundial" ~ "campeonato" ~ "titulo", "escuderia" ~ "equipo",
      "GP" ~ "Grand Prix", "gano" ~ "victoria" ~ "triunfo") y, si la
      pregunta menciona un ano, da prioridad a los documentos de esa
-     temporada.
+     temporada. Ademas, el top-k es variado por construccion: como mucho
+     2 documentos del mismo tipo y temporada, para que una consulta amplia
+     no devuelva la misma plantilla repetida (`RAG_DIVERSIFY=off` o
+     `--no-diversify` lo desactivan).
    - **Embeddings** (`RAG_RETRIEVER=embeddings`): vectores de OpenAI con
      similitud de coseno; captura sinonimos y parafrasis que BM25 no ve.
      Los vectores se guardan en un cache local (`data/*.embeddings.json`),
