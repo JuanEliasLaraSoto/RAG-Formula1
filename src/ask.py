@@ -35,6 +35,8 @@ def main() -> None:
                         help="Recuperador (por defecto RAG_RETRIEVER o bm25).")
     parser.add_argument("--top-k", type=int, default=5)
     parser.add_argument("--json", action="store_true", help="Salida JSON con fuentes.")
+    parser.add_argument("--no-diversify", action="store_true",
+                        help="Desactiva la variedad por grupos en el top-k.")
     args = parser.parse_args()
 
     data = Path(args.data)
@@ -43,7 +45,8 @@ def main() -> None:
     rag = F1Rag(data, retriever=args.retriever)
 
     def run(question: str) -> None:
-        result = rag.ask(question, top_k=args.top_k)
+        result = rag.ask(question, top_k=args.top_k,
+                         diversify=False if args.no_diversify else None)
         if args.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         else:
