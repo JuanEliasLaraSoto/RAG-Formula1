@@ -322,6 +322,55 @@ def test_cluster_victoria_en_sinonimos():
     assert results and results[0][0].id == "record"
 
 
+
+
+def test_diversify_groups_limita_plantillas_repetidas():
+    # Una consulta amplia ya no llena el top-k con la misma plantilla:
+    # maximo 2 documentos del mismo (tipo, temporada).
+    from rag import BM25Index
+
+    docs = [Document(id=f"standing-{i}", text=f"mundial pilotos {i}",
+                     metadata={"type": "standing", "season": 2026}) for i in range(5)]
+    docs.append(Document(id="reglas",
+                         text="el mundial de pilotos reparte puntos segun la posicion final de cada carrera"))
+    docs.append(Document(id="historia",
+                         text="el campeonato del mundo arranco en el ano 1950 en silverstone"))
+    index = BM25Index(docs)
+    ids = [d.id for d, _ in index.search("mundial de pilotos", top_k=4)]
+    assert ids[0] == "standing-0"  # el mejor resultado nunca se mueve
+    assert ids == ["standing-0", "standing-1", "reglas", "historia"]
+    # Desactivado, vuelve el ranking puro: todo la misma plantilla.
+    ids_raw = [d.id for d, _ in index.search("mundial de pilotos", top_k=4, diversify=False)]
+    assert ids_raw == ["standing-0", "standing-1", "standing-2", "standing-3"]
+
+
+def test_diversify_groups_rellena_si_no_hay_variedad():
+    from rag import diversify_groups, Document
+
+    docs = [(Document(id=f"s-{i}", text="x", metadata={"type": "standing", "season": 2026}),
+             1.0 - i * 0.01) for i in range(5)]
+    out = diversify_groups(docs, top_k=4, max_per_group=2)
+    assert len(out) == 4  # rellena con los descartados, en orden
+    assert [d.id for d, _ in out][:2] == ["s-0", "s-1"]
+    # Los documentos sin tipo+temporada nunca se limitan.
+    libres = [(Document(id=f"libre-{i}", text="x"), 1.0 - i * 0.01) for i in range(4)]
+    assert len(diversify_groups(libres, top_k=4)) == 4
+
+
+def test_diversify_desactivable_por_entorno():
+    import os
+    from rag import diversify_enabled
+
+    assert diversify_enabled(None) is True
+    os.environ["RAG_DIVERSIFY"] = "off"
+    try:
+        assert diversify_enabled(None) is False
+    finally:
+        del os.environ["RAG_DIVERSIFY"]
+    assert diversify_enabled(False) is False
+    assert diversify_enabled(True) is True
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
