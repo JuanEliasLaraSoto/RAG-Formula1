@@ -23,7 +23,10 @@ pregunta ──> recuperacion (BM25 o embeddings) ──> fragmentos relevantes 
      tildes, maneja espanol e ingles, ignora las palabras de pregunta
      ("quien", "cuanto", "ha"...), entiende sinonimos del dominio
      ("mundial" ~ "campeonato" ~ "titulo", "escuderia" ~ "equipo",
-     "GP" ~ "Grand Prix", "gano" ~ "victoria" ~ "triunfo") y, si la
+     "GP" ~ "Grand Prix", "gano" ~ "victoria" ~ "triunfo") y conoce los
+     apodos de los pilotos ("Checo" es Sergio Perez, "Magic" o "Nano" es
+     Fernando Alonso, "Kimi", "Seb", "Schumi"...), asi una pregunta con
+     el mote recupera los documentos de su piloto. Si la
      pregunta menciona un ano, da prioridad a los documentos de esa
      temporada. Ademas, el top-k es variado por construccion: como mucho
      2 documentos del mismo tipo y temporada, para que una consulta amplia
