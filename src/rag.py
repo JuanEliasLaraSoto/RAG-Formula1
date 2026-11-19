@@ -71,14 +71,16 @@ SYNONYM_WEIGHT = 0.6
 # Apodos de pilotos: tokens de consulta que no aparecen en los documentos
 # pero identifican a un piloto concreto ("Checo" es Sergio Perez). A
 # diferencia de un sinonimo, el apodo REFIERE al piloto, asi que se expande
-# a los tokens de su nombre completo con peso casi pleno.
+# a los tokens de su nombre completo con peso casi pleno. Solo entran
+# apodos sin ambiguedad: "Kimi" no vale, porque en el corpus hay dos
+# (Kimi Raikkonen y Andrea Kimi Antonelli) y el nombre ya aparece en sus
+# fichas, asi que la temporada de la consulta los desempata sola.
 _RAW_ALIASES = {
     "checo": "sergio perez",
     "nano": "fernando alonso",
     "magic": "fernando alonso",
     "mad": "max verstappen",
     "supermax": "max verstappen",
-    "kimi": "kimi raikkonen",
     "seb": "sebastian vettel",
     "schumi": "michael schumacher",
 }
