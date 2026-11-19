@@ -371,6 +371,57 @@ def test_diversify_desactivable_por_entorno():
     assert diversify_enabled(True) is True
 
 
+
+
+
+def test_apodos_de_pilotos_expanden_al_nombre():
+    # "Checo" no aparece en los documentos, pero refiere a Sergio Perez:
+    # el documento sobre Perez gana al historico de Schumacher.
+    from rag import BM25Index
+
+    docs = [Document(id="perez", text="Sergio Perez gano el Monaco Grand Prix de la temporada 2022.",
+                     metadata={"season": 2022}),
+            Document(id="schumi", text="Michael Schumacher gano siete titulos en su carrera.")]
+    index = BM25Index(docs)
+    results = index.search("cuantas carreras gano Checo", top_k=1)
+    assert results and results[0][0].id == "perez"
+
+
+def test_apodos_magic_kimi_y_seb():
+    from rag import BM25Index
+
+    docs = [Document(id="alonso", text="Fernando Alonso es un piloto de Formula 1 (Spanish)."),
+            Document(id="raikkonen", text="Kimi Raikkonen es un piloto de Formula 1 (Finnish)."),
+            Document(id="vettel", text="Sebastian Vettel es un piloto de Formula 1 (German).")]
+    index = BM25Index(docs)
+    assert index.search("que tal Magic", top_k=1)[0][0].id == "alonso"
+    assert index.search("que tal Kimi", top_k=1)[0][0].id == "raikkonen"
+    assert index.search("que tal Seb", top_k=1)[0][0].id == "vettel"
+
+
+def test_apodos_no_roban_consultas_sin_piloto():
+    # Sin apodo en la consulta, el ranking no cambia.
+    from rag import BM25Index
+
+    docs = [Document(id="reglas", text="Los diez primeros clasificados puntuan en cada carrera."),
+            Document(id="perez", text="Sergio Perez es un piloto de Formula 1 (Mexican).")]
+    index = BM25Index(docs)
+    results = index.search("como se puntua en las carreras", top_k=1)
+    assert results and results[0][0].id == "reglas"
+
+
+def test_apodos_en_datos_reales():
+    # Con el corpus real, los apodos recuperan documentos de SU piloto.
+    real = DATA.parent / "f1_data.jsonl"
+    if not real.exists():
+        return
+    rag = F1Rag(real)
+    r = rag.index.search("cuantas carreras gano Checo", top_k=5)
+    assert r and "Pérez" in r[0][0].text
+    r = rag.index.search("como le fue a Kimi en 2021", top_k=1)
+    assert r and "Räikkönen" in r[0][0].text
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
