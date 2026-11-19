@@ -68,6 +68,23 @@ _RAW_SYNONYMS = {
 SYNONYMS = {stem(k): [stem(v) for v in vals] for k, vals in _RAW_SYNONYMS.items()}
 SYNONYM_WEIGHT = 0.6
 
+# Apodos de pilotos: tokens de consulta que no aparecen en los documentos
+# pero identifican a un piloto concreto ("Checo" es Sergio Perez). A
+# diferencia de un sinonimo, el apodo REFIERE al piloto, asi que se expande
+# a los tokens de su nombre completo con peso casi pleno.
+_RAW_ALIASES = {
+    "checo": "sergio perez",
+    "nano": "fernando alonso",
+    "magic": "fernando alonso",
+    "mad": "max verstappen",
+    "supermax": "max verstappen",
+    "kimi": "kimi raikkonen",
+    "seb": "sebastian vettel",
+    "schumi": "michael schumacher",
+}
+ALIASES = {stem(k): [stem(t) for t in v.split()] for k, v in _RAW_ALIASES.items()}
+ALIAS_WEIGHT = 0.9
+
 # Ajuste por temporada: si la consulta menciona un ano, los documentos con
 # metadata de esa temporada puntuan mas y los de otras temporadas, menos.
 SEASON_BOOST = 1.5
@@ -179,23 +196,30 @@ class BM25Index:
         for term in q_terms:
             for syn in SYNONYMS.get(term, ()):
                 weighted.setdefault(syn, SYNONYM_WEIGHT)
+            for alias in ALIASES.get(term, ()):
+                weighted.setdefault(alias, ALIAS_WEIGHT)
         scored = []
         for doc, tf, dl in zip(self.documents, self.tf, self.doc_len):
             score = 0.0
-            matched = 0
+            covered: set[str] = set()
             for tok, weight in weighted.items():
                 freq = tf.get(tok, 0)
                 if not freq:
                     continue
                 if tok in q_terms:
-                    matched += 1
+                    covered.add(tok)
                 denom = freq + self.k1 * (1 - self.b + self.b * dl / self.avgdl)
                 score += weight * self._idf(tok) * (freq * (self.k1 + 1)) / denom
+            # Un apodo queda cubierto si el documento nombra al piloto:
+            # "Checo" se satisface con un texto que dice "Sergio Perez".
+            for term in q_terms:
+                if term not in covered and any(tf.get(a, 0) for a in ALIASES.get(term, ())):
+                    covered.add(term)
             if score > 0:
                 # Cobertura: un documento que no cubre todos los terminos
                 # originales de la consulta se penaliza en proporcion, asi
                 # un sinonimo suelto no adelanta a una coincidencia plena.
-                coverage = matched / len(q_terms)
+                coverage = len(covered) / len(q_terms)
                 score *= coverage
                 # Ajuste por temporada: con un ano en la consulta, los
                 # documentos de esa temporada suben y los de otras bajan.
