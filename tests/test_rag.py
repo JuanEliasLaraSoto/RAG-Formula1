@@ -387,16 +387,23 @@ def test_apodos_de_pilotos_expanden_al_nombre():
     assert results and results[0][0].id == "perez"
 
 
-def test_apodos_magic_kimi_y_seb():
+def test_apodos_magic_y_seb():
     from rag import BM25Index
 
     docs = [Document(id="alonso", text="Fernando Alonso es un piloto de Formula 1 (Spanish)."),
-            Document(id="raikkonen", text="Kimi Raikkonen es un piloto de Formula 1 (Finnish)."),
             Document(id="vettel", text="Sebastian Vettel es un piloto de Formula 1 (German).")]
     index = BM25Index(docs)
     assert index.search("que tal Magic", top_k=1)[0][0].id == "alonso"
-    assert index.search("que tal Kimi", top_k=1)[0][0].id == "raikkonen"
     assert index.search("que tal Seb", top_k=1)[0][0].id == "vettel"
+
+
+def test_kimi_no_es_alias_por_ser_ambiguo():
+    # "Kimi" vale para Raikkonen y para Andrea Kimi Antonelli: no puede ser
+    # alias de uno solo. Su nombre ya esta en las fichas, asi que la
+    # temporada de la consulta desempata.
+    from rag import ALIASES
+
+    assert "kimi" not in ALIASES
 
 
 def test_apodos_no_roban_consultas_sin_piloto():
@@ -420,6 +427,11 @@ def test_apodos_en_datos_reales():
     assert r and "Pérez" in r[0][0].text
     r = rag.index.search("como le fue a Kimi en 2021", top_k=1)
     assert r and "Räikkönen" in r[0][0].text
+    # Con 2026 el mismo "Kimi" es Antonelli: sin forzar piloto sin contexto.
+    r = rag.index.search("como le fue a Kimi en 2026", top_k=5)
+    ids = [d.id for d, _ in r]
+    assert any("antonelli" in i for i in ids), ids
+    assert not any("raikkonen" in i for i in ids), ids
 
 
 if __name__ == "__main__":
