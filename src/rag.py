@@ -146,6 +146,28 @@ def diversify_groups(scored: list, top_k: int, max_per_group: int = 2) -> list:
     return selected
 
 
+def has_recency_intent(question: str) -> bool:
+    """La consulta habla de actualidad ("ultimo", "reciente", "actual"...)."""
+    return bool(set(tokenize(question)) & RECENCY_TERMS)
+
+
+def corpus_coverage(documents: list) -> dict | None:
+    """Cobertura temporal del corpus: la carrera mas reciente indexada y su
+    fecha. Sirve para que las respuestas de actualidad digan hasta donde
+    llegan los datos en vez de darlos por hoy."""
+    races = []
+    for d in documents:
+        if d.metadata.get("type") == "race":
+            m = _RACE_DATE_RE.search(d.text)
+            if m:
+                name = re.search(r"^[Ee]l (.+?) de la temporada", d.text)
+                races.append((m.group(0), name.group(1) if name else d.id))
+    if not races:
+        return None
+    fecha, nombre = max(races)
+    return {"ultima_carrera": nombre, "fecha": fecha}
+
+
 def diversify_enabled(explicit: bool | None) -> bool:
     """Diversificacion MMR activa por defecto; RAG_DIVERSIFY=off la quita."""
     if explicit is not None:
@@ -491,6 +513,7 @@ class F1Rag:
         self.documents = load_documents(data_path)
         if not self.documents:
             raise ValueError(f"Sin documentos en {data_path}")
+        self.coverage = corpus_coverage(self.documents)
         retriever = (retriever or os.environ.get("RAG_RETRIEVER", "bm25")).lower()
         if retriever == "embeddings":
             self.index = EmbeddingIndex(self.documents, embed_fn=embed_fn,
@@ -533,6 +556,13 @@ class F1Rag:
             answer = generate_with_llm(prompt)
         else:
             answer = extractive_answer(results)
+        if self.coverage and has_recency_intent(question):
+            # Las preguntas de actualidad se responden con los datos
+            # indexados, que pueden ir por detras del calendario real:
+            # la respuesta dice hasta que carrera llegan.
+            answer += (f"\n\n(Datos indexados hasta el "
+                       f"{self.coverage['ultima_carrera']}, "
+                       f"{self.coverage['fecha']}.)")
         return {
             "answer": answer,
             "sources": [
