@@ -93,6 +93,13 @@ SEASON_BOOST = 1.5
 SEASON_DAMP = 0.7
 _YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
 
+# Actualidad: "ultimo", "reciente", "actual"... sin ano en la consulta se
+# interpretan como la temporada mas reciente del corpus, y entre carreras
+# gana la de fecha mas reciente dentro del alcance temporal activo.
+RECENCY_TERMS = {"ultimo", "ultima", "reciente", "actual", "vigente"}
+RACE_RECENCY_BOOST = 4.0
+_RACE_DATE_RE = re.compile(r"\b(?:19|20)\d{2}-\d{2}-\d{2}\b")
+
 
 def extract_years(text: str) -> set[str]:
     """Anos (19xx/20xx) mencionados en un texto, como strings."""
@@ -171,6 +178,20 @@ class BM25Index:
         self.doc_len = [len(t) for t in self.doc_tokens]
         self.avgdl = (sum(self.doc_len) / len(self.doc_len)) or 1.0
         self.n_docs = len(documents)
+        self.latest_season = max(
+            (d.metadata.get("season") for d in documents
+             if isinstance(d.metadata.get("season"), int)),
+            default=None,
+        )
+        # Fecha de cada carrera (solo documentos tipo race), para "la ultima
+        # carrera": entre las del alcance temporal activo gana la mas reciente.
+        self.race_dates: list[str | None] = []
+        for d in documents:
+            if d.metadata.get("type") == "race":
+                m = _RACE_DATE_RE.search(d.text)
+                self.race_dates.append(m.group(0) if m else None)
+            else:
+                self.race_dates.append(None)
         self.tf: list[dict[str, int]] = []
         self.df: dict[str, int] = {}
         for tokens in self.doc_tokens:
@@ -192,6 +213,10 @@ class BM25Index:
         if not q_terms:
             return []
         years = extract_years(query)
+        recency = bool(q_terms & RECENCY_TERMS)
+        if recency and not years and self.latest_season is not None:
+            # "ultimo/reciente/actual" sin ano: la temporada mas reciente.
+            years = {str(self.latest_season)}
         # Expansion de sinonimos de la consulta: el termino original pesa 1.0
         # y cada sinonimo un peso reducido.
         weighted = {t: 1.0 for t in q_terms}
@@ -201,7 +226,8 @@ class BM25Index:
             for alias in ALIASES.get(term, ()):
                 weighted.setdefault(alias, ALIAS_WEIGHT)
         scored = []
-        for doc, tf, dl in zip(self.documents, self.tf, self.doc_len):
+        for doc, tf, dl, rdate in zip(self.documents, self.tf, self.doc_len,
+                                      self.race_dates):  # rdate solo en races
             score = 0.0
             covered: set[str] = set()
             for tok, weight in weighted.items():
@@ -217,6 +243,11 @@ class BM25Index:
             for term in q_terms:
                 if term not in covered and any(tf.get(a, 0) for a in ALIASES.get(term, ())):
                     covered.add(term)
+            # "carrera" tambien la cubre un documento que ES una carrera,
+            # aunque su texto no use la palabra (las fichas dicen "Grand
+            # Prix" y "se disputo", no "carrera").
+            if "carrera" in q_terms and doc.metadata.get("type") == "race":
+                covered.add("carrera")
             if score > 0:
                 # Cobertura: un documento que no cubre todos los terminos
                 # originales de la consulta se penaliza en proporcion, asi
@@ -229,8 +260,20 @@ class BM25Index:
                     season = str(doc.metadata.get("season", ""))
                     if season:
                         score *= SEASON_BOOST if season in years else SEASON_DAMP
-                scored.append((doc, score))
+                scored.append([doc, score, rdate])
+        if recency:
+            # La carrera mas reciente ENTRE las que encajan con la consulta:
+            # "la ultima victoria de Hamilton" es su ultima carrera ganada,
+            # no necesariamente la ultima del calendario.
+            dates = [rdate for doc, s, rdate in scored if rdate and years
+                     and str(doc.metadata.get("season", "")) in years]
+            if dates:
+                latest = max(dates)
+                for entry in scored:
+                    if entry[2] == latest:
+                        entry[1] *= RACE_RECENCY_BOOST
         scored.sort(key=lambda x: x[1], reverse=True)
+        scored = [(doc, s) for doc, s, _ in scored]
         if diversify_enabled(diversify):
             return diversify_groups(scored, top_k)
         return scored[:top_k]
