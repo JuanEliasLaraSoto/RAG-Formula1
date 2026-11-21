@@ -35,7 +35,10 @@ pregunta ──> recuperacion (BM25 o embeddings) ──> fragmentos relevantes 
      o "vigente" sin ano se leen como la temporada mas reciente de los
      datos, y "la ultima carrera" es la de fecha mas reciente entre las
      que encajan con la pregunta ("la ultima victoria de Hamilton" es su
-     ultima carrera ganada, no la ultima del calendario). Ademas, el top-k es variado por construccion: como mucho
+     ultima carrera ganada, no la ultima del calendario). Como los datos
+     son una foto y pueden ir por detras del calendario real, las
+     respuestas de actualidad declaran su cobertura: "(Datos indexados
+     hasta el <ultima carrera>, <fecha>.)". Ademas, el top-k es variado por construccion: como mucho
      2 documentos del mismo tipo y temporada, para que una consulta amplia
      no devuelva la misma plantilla repetida (`RAG_DIVERSIFY=off` o
      `--no-diversify` lo desactivan).
