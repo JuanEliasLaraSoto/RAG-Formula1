@@ -31,7 +31,11 @@ pregunta ──> recuperacion (BM25 o embeddings) ──> fragmentos relevantes 
      y como el nombre ya esta en las fichas, la temporada de la consulta
      los desempata. Si la
      pregunta menciona un ano, da prioridad a los documentos de esa
-     temporada. Ademas, el top-k es variado por construccion: como mucho
+     temporada, y entiende la actualidad: "ultimo", "reciente", "actual"
+     o "vigente" sin ano se leen como la temporada mas reciente de los
+     datos, y "la ultima carrera" es la de fecha mas reciente entre las
+     que encajan con la pregunta ("la ultima victoria de Hamilton" es su
+     ultima carrera ganada, no la ultima del calendario). Ademas, el top-k es variado por construccion: como mucho
      2 documentos del mismo tipo y temporada, para que una consulta amplia
      no devuelva la misma plantilla repetida (`RAG_DIVERSIFY=off` o
      `--no-diversify` lo desactivan).
