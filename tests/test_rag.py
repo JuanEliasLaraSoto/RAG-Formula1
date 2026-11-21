@@ -434,6 +434,60 @@ def test_apodos_en_datos_reales():
     assert not any("raikkonen" in i for i in ids), ids
 
 
+
+
+def test_actualidad_sin_ano_usa_la_temporada_mas_reciente():
+    # "mas reciente" sin ano se resuelve con la ultima temporada del corpus.
+    from rag import BM25Index
+
+    docs = [Document(id="c2023", text="Max Verstappen se proclamo campeon del mundo de 2023.",
+                     metadata={"type": "champion", "season": 2023}),
+            Document(id="c2024", text="Max Verstappen se proclamo campeon del mundo de 2024.",
+                     metadata={"type": "champion", "season": 2024})]
+    index = BM25Index(docs)
+    results = index.search("quien es el campeon mas reciente", top_k=1)
+    assert results and results[0][0].id == "c2024"
+
+
+def test_ultima_carrera_es_la_de_fecha_mas_reciente():
+    # "la ultima carrera" da la carrera de fecha mas reciente, no cualquiera.
+    from rag import BM25Index
+
+    docs = [Document(id="r1", text="El Bahrain Grand Prix de 2026 se disputo el 2026-03-08. Gano Oscar Piastri.",
+                     metadata={"type": "race", "season": 2026}),
+            Document(id="r2", text="El Mexico City Grand Prix de 2026 se disputo el 2026-11-01. Gano Max Verstappen.",
+                     metadata={"type": "race", "season": 2026})]
+    index = BM25Index(docs)
+    results = index.search("quien gano la ultima carrera", top_k=1)
+    assert results and results[0][0].id == "r2"
+
+
+def test_ultima_carrera_con_ano_explicito_no_salta_de_temporada():
+    # Con ano explicito, "la ultima carrera" se queda dentro de ese ano.
+    from rag import BM25Index
+
+    docs = [Document(id="r2025", text="El Abu Dhabi Grand Prix de 2025 se disputo el 2025-12-07. Gano Lando Norris.",
+                     metadata={"type": "race", "season": 2025}),
+            Document(id="r2026", text="El Mexico City Grand Prix de 2026 se disputo el 2026-11-01. Gano Max Verstappen.",
+                     metadata={"type": "race", "season": 2026})]
+    index = BM25Index(docs)
+    results = index.search("quien gano la ultima carrera de 2025", top_k=1)
+    assert results and results[0][0].id == "r2025"
+
+
+def test_actualidad_en_datos_reales():
+    real = DATA.parent / "f1_data.jsonl"
+    if not real.exists():
+        return
+    rag = F1Rag(real)
+    r = rag.index.search("quien es el campeon mas reciente", top_k=1)
+    assert r and r[0][0].id == "champion-2026-drivers", r[0][0].id
+    r = rag.index.search("quien gano la ultima carrera", top_k=1)
+    assert r and r[0][0].id == "race-2026-r19", r[0][0].id
+    r = rag.index.search("quien gano la ultima carrera de 2025", top_k=1)
+    assert r and r[0][0].id == "race-2025-r24", r[0][0].id
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
