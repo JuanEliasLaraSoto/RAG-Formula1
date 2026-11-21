@@ -483,9 +483,76 @@ def test_actualidad_en_datos_reales():
     r = rag.index.search("quien es el campeon mas reciente", top_k=1)
     assert r and r[0][0].id == "champion-2026-drivers", r[0][0].id
     r = rag.index.search("quien gano la ultima carrera", top_k=1)
-    assert r and r[0][0].id == "race-2026-r19", r[0][0].id
+    import json as _json
+    import re as _re
+    esperada = max(
+        (_json.loads(l) for l in open(real, encoding="utf-8") if l.strip()
+         if _json.loads(l)["metadata"].get("type") == "race"),
+        key=lambda d: _re.search(r"(\d{4}-\d{2}-\d{2})", d["text"]).group(0))
+    assert r and r[0][0].id == esperada["id"], (r[0][0].id, esperada["id"])
     r = rag.index.search("quien gano la ultima carrera de 2025", top_k=1)
     assert r and r[0][0].id == "race-2025-r24", r[0][0].id
+
+
+
+
+def test_nota_de_cobertura_con_actualidad():
+    # Las respuestas de actualidad declaran hasta donde llegan los datos.
+    from rag import BM25Index, corpus_coverage
+
+    docs = [Document(id="r1", text="El Bahrain Grand Prix de la temporada 2026 se disputo el 2026-03-08. Gano Oscar Piastri.",
+                     metadata={"type": "race", "season": 2026}),
+            Document(id="r2", text="El Mexico City Grand Prix de la temporada 2026 se disputo el 2026-11-01. Gano Max Verstappen.",
+                     metadata={"type": "race", "season": 2026})]
+    import rag as rag_mod
+    r = F1Rag.__new__(F1Rag)
+    r.documents = docs
+    r.index = BM25Index(docs)
+    r.coverage = corpus_coverage(docs)
+    a = r.ask("quien gano la ultima carrera")
+    assert "Datos indexados hasta el Mexico City Grand Prix, 2026-11-01." in a["answer"]
+
+
+def test_nota_de_cobertura_solo_con_actualidad():
+    # Sin terminos de actualidad no se anade la nota.
+    from rag import BM25Index, corpus_coverage
+
+    docs = [Document(id="c1", text="Max Verstappen se proclamo campeon del mundo de 2024.",
+                     metadata={"type": "champion", "season": 2024}),
+            Document(id="r1", text="El Bahrain Grand Prix de la temporada 2026 se disputo el 2026-03-08. Gano Oscar Piastri.",
+                     metadata={"type": "race", "season": 2026})]
+    r = F1Rag.__new__(F1Rag)
+    r.documents = docs
+    r.index = BM25Index(docs)
+    r.coverage = corpus_coverage(docs)
+    a = r.ask("quien es el campeon de 2024")
+    assert "Datos indexados" not in a["answer"]
+
+
+def test_cobertura_datos_reales_no_desactualizada():
+    # Regresion de foto antigua: la cobertura declarada tiene que ser la
+    # ultima carrera QUE HAY en el corpus, calculada leyendo los datos.
+    # Si alguien refresca datos y rompe el calculo (o lo fija a mano),
+    # este test salta.
+    from rag import corpus_coverage
+    import json as _json
+    import re as _re
+
+    real = DATA.parent / "f1_data.jsonl"
+    if not real.exists():
+        return
+    fechas = []
+    for l in open(real, encoding="utf-8"):
+        if not l.strip():
+            continue
+        d = _json.loads(l)
+        if d["metadata"].get("type") == "race":
+            fechas.append(_re.search(r"(\d{4}-\d{2}-\d{2})", d["text"]).group(0))
+    rag = F1Rag(real)
+    assert rag.coverage["fecha"] == max(fechas), (rag.coverage, max(fechas))
+    a = rag.ask("quien gano la ultima carrera")
+    assert rag.coverage["fecha"] in a["answer"]
+    assert rag.coverage["ultima_carrera"] in a["answer"]
 
 
 if __name__ == "__main__":
