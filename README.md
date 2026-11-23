@@ -38,7 +38,12 @@ pregunta ──> recuperacion (BM25 o embeddings) ──> fragmentos relevantes 
      ultima carrera ganada, no la ultima del calendario). Como los datos
      son una foto y pueden ir por detras del calendario real, las
      respuestas de actualidad declaran su cobertura: "(Datos indexados
-     hasta el <ultima carrera>, <fecha>.)". Ademas, el top-k es variado por construccion: como mucho
+     hasta el <ultima carrera>, <fecha>.)". Las preguntas de recuento
+     ("cuantas carreras gano Verstappen en 2026", "cuantas victorias
+     tiene McLaren en 2025") se responden con el numero calculado de las
+     carreras del corpus, con la lista de grandes premios si son pocas;
+     sin ano, el recuento abarca todas las temporadas de los datos y lo
+     dice. Ademas, el top-k es variado por construccion: como mucho
      2 documentos del mismo tipo y temporada, para que una consulta amplia
      no devuelva la misma plantilla repetida (`RAG_DIVERSIFY=off` o
      `--no-diversify` lo desactivan).
