@@ -168,6 +168,100 @@ def corpus_coverage(documents: list) -> dict | None:
     return {"ultima_carrera": nombre, "fecha": fecha}
 
 
+_RACE_WIN_RE = re.compile(r"Gano (.+?) con (.+?) en un tiempo")
+
+
+def count_wins(question: str, documents: list) -> str | None:
+    """Respuesta calculada a "cuantas carreras/victorias gano X [en <ano>]".
+
+    Cuenta las carreras del corpus ganadas por ese piloto ("Gano <nombre>")
+    o por ese equipo ("con <equipo>") dentro del alcance temporal de la
+    consulta, y lo dice en una frase; el detalle lo dan los fragmentos.
+    Devuelve None si la consulta no es de recuento o el piloto/equipo es
+    ambiguo (misma regla que con Kimi: sin contexto no se fuerza).
+    """
+    if not re.search(r"\bcuant[ao]s?\b", normalize(question)):
+        return None
+    q_tokens = set(tokenize(question))
+    if "carrera" not in q_tokens and "victoria" not in q_tokens:
+        return None
+    # Los apodos valen tambien para contar ("cuantas carreras gano Checo").
+    expanded = set(q_tokens)
+    for t in q_tokens:
+        expanded.update(ALIASES.get(t, ()))
+
+    drivers = {d.metadata["name"] for d in documents
+               if d.metadata.get("type") == "driver" and d.metadata.get("name")}
+    teams = {d.metadata["name"] for d in documents
+             if d.metadata.get("type") in ("constructor", "team") and d.metadata.get("name")}
+
+    def ntok(name: str) -> set[str]:
+        return set(tokenize(name))
+
+    def matches(names: set[str]) -> list[str]:
+        # Coincide si algun token largo del nombre esta en la consulta
+        # (p. ej. el apellido o el nombre del equipo).
+        return sorted(n for n in names
+                      if any(tok in expanded for tok in ntok(n) if len(tok) > 3))
+
+    m_drivers = matches(drivers)
+    m_teams = matches(teams)
+    entity, is_team = None, False
+    if len(m_drivers) == 1:
+        entity = m_drivers[0]
+    elif len(m_drivers) == 0 and len(m_teams) == 1:
+        entity, is_team = m_teams[0], True
+    elif len(m_drivers) > 1:
+        # El apellido desempata: "Kimi" toca a dos pilotos, "Antonelli" a uno.
+        by_surname = [n for n in m_drivers if tokenize(n)[-1:] and tokenize(n)[-1] in expanded]
+        if len(by_surname) == 1:
+            entity = by_surname[0]
+        else:
+            return None
+    else:
+        return None
+
+    years = extract_years(question)
+    recency = has_recency_intent(question)
+    seasons = sorted({str(d.metadata.get("season")) for d in documents
+                      if d.metadata.get("type") == "race"})
+    if not years and recency and seasons:
+        years = {seasons[-1]}
+    wins = []
+    for d in documents:
+        if d.metadata.get("type") != "race":
+            continue
+        if years and str(d.metadata.get("season", "")) not in years:
+            continue
+        m = _RACE_WIN_RE.search(d.text)
+        if not m:
+            continue
+        winner, team = m.group(1), m.group(2)
+        if is_team:
+            hit = ntok(team) <= ntok(entity) or ntok(entity) <= ntok(team)
+        else:
+            hit = winner == entity
+        if hit:
+            gp = re.search(r"^[Ee]l (.+?) de la temporada", d.text)
+            fecha = _RACE_DATE_RE.search(d.text)
+            wins.append((fecha.group(0) if fecha else "", gp.group(1) if gp else d.id))
+    wins.sort()
+
+    if years:
+        scope = "en " + " y ".join(sorted(years))
+    elif seasons:
+        scope = f"en las temporadas {seasons[0]}-{seasons[-1]} de los datos"
+    else:
+        scope = "en los datos"
+    n = len(wins)
+    if n == 0:
+        return f"Segun los datos indexados, {entity} no gano ninguna carrera {scope}."
+    lista = ", ".join(gp for _, gp in wins[:8])
+    sufijo = f": {lista}" if n <= 8 else ""
+    return (f"Segun los datos indexados, {entity} gano {n} "
+            f"carrera{'s' if n != 1 else ''} {scope}{sufijo}.")
+
+
 def diversify_enabled(explicit: bool | None) -> bool:
     """Diversificacion MMR activa por defecto; RAG_DIVERSIFY=off la quita."""
     if explicit is not None:
@@ -551,11 +645,16 @@ class F1Rag:
                 "answer": "No encontre nada relevante en la base de conocimiento.",
                 "sources": [],
             }
+        counting = count_wins(question, self.documents)
         prompt = build_prompt(question, results)
         if os.environ.get("OPENAI_API_KEY"):
+            if counting:
+                prompt += f"\n\nDato calculado de los documentos (usalo tal cual): {counting}"
             answer = generate_with_llm(prompt)
         else:
             answer = extractive_answer(results)
+            if counting:
+                answer = counting + "\n\n" + answer
         if self.coverage and has_recency_intent(question):
             # Las preguntas de actualidad se responden con los datos
             # indexados, que pueden ir por detras del calendario real:
