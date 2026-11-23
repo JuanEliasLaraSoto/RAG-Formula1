@@ -555,6 +555,76 @@ def test_cobertura_datos_reales_no_desactualizada():
     assert rag.coverage["ultima_carrera"] in a["answer"]
 
 
+
+
+def test_recuento_de_victorias_piloto():
+    # "cuantas carreras gano X en <ano>" responde con el numero, calculado.
+    from rag import count_wins
+
+    docs = [Document(id="r1", text="El Bahrain Grand Prix de la temporada 2026 se disputo el 2026-03-08. Gano Max Verstappen con Red Bull en un tiempo de 1:30:00.000.",
+                     metadata={"type": "race", "season": 2026}),
+            Document(id="r2", text="El Mexico City Grand Prix de la temporada 2026 se disputo el 2026-11-01. Gano Max Verstappen con Red Bull en un tiempo de 1:40:00.000.",
+                     metadata={"type": "race", "season": 2026}),
+            Document(id="r3", text="El Monaco Grand Prix de la temporada 2026 se disputo el 2026-05-24. Gano Lando Norris con McLaren en un tiempo de 1:35:00.000.",
+                     metadata={"type": "race", "season": 2026}),
+            Document(id="d1", text="Max Verstappen es un piloto de Formula 1 (Dutch).",
+                     metadata={"type": "driver", "season": 2026, "name": "Max Verstappen"}),
+            Document(id="d2", text="Lando Norris es un piloto de Formula 1 (British).",
+                     metadata={"type": "driver", "season": 2026, "name": "Lando Norris"})]
+    r = count_wins("cuantas carreras gano Verstappen en 2026", docs)
+    assert r and "Max Verstappen gano 2 carreras en 2026" in r, r
+    r = count_wins("cuantas victorias tiene Norris en 2026", docs)
+    assert r and "Lando Norris gano 1 carrera en 2026" in r, r
+    r = count_wins("cuantas carreras gano Alonso en 2026", docs)
+    assert r is None  # Alonso no esta en este corpus de prueba
+
+
+def test_recuento_de_victorias_equipo():
+    from rag import count_wins
+
+    docs = [Document(id="r1", text="El Bahrain Grand Prix de la temporada 2025 se disputo el 2025-03-16. Gano Lando Norris con McLaren en un tiempo de 1:30:00.000.",
+                     metadata={"type": "race", "season": 2025}),
+            Document(id="r2", text="El Monaco Grand Prix de la temporada 2025 se disputo el 2025-05-25. Gano Oscar Piastri con McLaren en un tiempo de 1:35:00.000.",
+                     metadata={"type": "race", "season": 2025}),
+            Document(id="t1", text="McLaren es un equipo (constructor) de Formula 1.",
+                     metadata={"type": "constructor", "name": "McLaren"})]
+    r = count_wins("cuantas carreras gano McLaren en 2025", docs)
+    assert r and "McLaren gano 2 carreras en 2025" in r, r
+
+
+def test_recuento_sin_ano_abarca_el_corpus_y_sin_forzar_apodos_ambiguos():
+    from rag import count_wins
+
+    docs = [Document(id="r1", text="El Bahrain Grand Prix de la temporada 2025 se disputo el 2025-03-16. Gano Kimi Raikkonen con Alfa Romeo en un tiempo de 1:30:00.000.",
+                     metadata={"type": "race", "season": 2025}),
+            Document(id="r2", text="El Monza Grand Prix de la temporada 2026 se disputo el 2026-09-06. Gano Andrea Kimi Antonelli con Mercedes en un tiempo de 1:20:00.000.",
+                     metadata={"type": "race", "season": 2026}),
+            Document(id="d1", text="Kimi Raikkonen es un piloto.", metadata={"type": "driver", "name": "Kimi Raikkonen"}),
+            Document(id="d2", text="Andrea Kimi Antonelli es un piloto.", metadata={"type": "driver", "name": "Andrea Kimi Antonelli"})]
+    # "Kimi" solo es ambiguo: sin apellido ni contexto no se fuerza.
+    assert count_wins("cuantas carreras gano Kimi", docs) is None
+    # Con el apellido si.
+    r = count_wins("cuantas carreras gano Antonelli", docs)
+    assert r and "Andrea Kimi Antonelli gano 1 carrera" in r, r
+    # Sin ano, el alcance dice las temporadas del corpus.
+    r = count_wins("cuantas carreras gano Raikkonen", docs)
+    assert r and "2025-2026" in r, r
+
+
+def test_recuento_en_datos_reales():
+    real = DATA.parent / "f1_data.jsonl"
+    if not real.exists():
+        return
+    rag = F1Rag(real)
+    a = rag.ask("cuantas carreras gano Verstappen en 2026")
+    assert "Max Verstappen gano 3 carreras en 2026" in a["answer"], a["answer"][:200]
+    a = rag.ask("cuantas carreras gano McLaren en 2025")
+    assert "McLaren gano 14 carreras en 2025" in a["answer"], a["answer"][:200]
+    # Una pregunta que no es de recuento no lleva frase calculada.
+    a = rag.ask("quien gano el mundial de pilotos 2024")
+    assert "Segun los datos indexados" not in a["answer"]
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
