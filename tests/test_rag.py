@@ -611,18 +611,124 @@ def test_recuento_sin_ano_abarca_el_corpus_y_sin_forzar_apodos_ambiguos():
     assert r and "2025-2026" in r, r
 
 
+def _victorias_en_corpus(docs, quien, temporada, equipo=False):
+    # Cuenta las victorias leyendo el corpus, igual que count_wins: sirve
+    # para que los tests sobre datos reales calculen lo esperado de los
+    # datos y no lo fijen a mano (si se refresca 2026, el test se mueve
+    # con los datos en vez de quedarse en una foto antigua).
+    import re as _re
+
+    n = 0
+    for d in docs:
+        if d.metadata.get("type") != "race" or str(d.metadata.get("season")) != str(temporada):
+            continue
+        m = _re.search(r"Gano (.+?) con (.+?) en un tiempo", d.text)
+        if not m:
+            continue
+        if equipo:
+            qt, et = set(quien.lower().split()), set(m.group(2).lower().split())
+            hit = qt <= et or et <= qt
+        else:
+            hit = m.group(1) == quien
+        n += 1 if hit else 0
+    return n
+
+
 def test_recuento_en_datos_reales():
     real = DATA.parent / "f1_data.jsonl"
     if not real.exists():
         return
+    from rag import load_documents
+
+    docs = load_documents(real)
     rag = F1Rag(real)
+    esp = _victorias_en_corpus(docs, "Max Verstappen", 2026)
     a = rag.ask("cuantas carreras gano Verstappen en 2026")
-    assert "Max Verstappen gano 3 carreras en 2026" in a["answer"], a["answer"][:200]
+    assert f"Max Verstappen gano {esp} carrera" in a["answer"], a["answer"][:300]
+    # 2026 es la ultima temporada del corpus: el recuento declara cobertura.
+    assert "Datos indexados hasta el" in a["answer"], a["answer"][:300]
+    esp = _victorias_en_corpus(docs, "McLaren", 2025, equipo=True)
     a = rag.ask("cuantas carreras gano McLaren en 2025")
-    assert "McLaren gano 14 carreras en 2025" in a["answer"], a["answer"][:200]
+    assert f"McLaren gano {esp} carreras en 2025" in a["answer"], a["answer"][:300]
+    # Temporada sin carreras indexadas: ausencia de datos, no un cero.
+    a = rag.ask("cuantas carreras gano Verstappen en 2027")
+    assert "No tengo carreras indexadas de 2027" in a["answer"], a["answer"][:300]
     # Una pregunta que no es de recuento no lleva frase calculada.
     a = rag.ask("quien gano el mundial de pilotos 2024")
     assert "Segun los datos indexados" not in a["answer"]
+
+
+def test_recuento_temporada_sin_datos_no_es_cero():
+    # Pedir una temporada sin carreras indexadas no es un cero medido:
+    # es ausencia de datos, y la respuesta lo dice junto con hasta donde
+    # llega la base.
+    from rag import count_wins
+
+    docs = [Document(id="r1", text="El Bahrain Grand Prix de la temporada 2026 se disputo el 2026-03-08. Gano Max Verstappen con Red Bull en un tiempo de 1:30:00.000.",
+                     metadata={"type": "race", "season": 2026}),
+            Document(id="d1", text="Max Verstappen es un piloto de Formula 1 (Dutch).",
+                     metadata={"type": "driver", "season": 2026, "name": "Max Verstappen"})]
+    r = count_wins("cuantas carreras gano Verstappen en 2027", docs)
+    assert r is not None
+    assert "No tengo carreras indexadas de 2027" in r, r
+    assert "no gano ninguna" not in r, r
+    assert "2026" in r, r
+
+
+def test_recuento_ano_explicito_declara_cobertura():
+    # Un recuento con ano explicito sobre la ultima temporada del corpus
+    # (que puede ir incompleta) declara hasta que carrera llegan los
+    # datos, aunque la pregunta no use palabras de actualidad. Una
+    # temporada cerrada no lleva la nota.
+    from rag import count_wins
+
+    docs = [Document(id="r1", text="El Monaco Grand Prix de la temporada 2025 se disputo el 2025-05-25. Gano Lando Norris con McLaren en un tiempo de 1:35:00.000.",
+                     metadata={"type": "race", "season": 2025}),
+            Document(id="r2", text="El Mexico City Grand Prix de la temporada 2026 se disputo el 2026-11-01. Gano Max Verstappen con Red Bull en un tiempo de 1:40:00.000.",
+                     metadata={"type": "race", "season": 2026}),
+            Document(id="d1", text="Max Verstappen es un piloto.",
+                     metadata={"type": "driver", "name": "Max Verstappen"}),
+            Document(id="d2", text="Lando Norris es un piloto.",
+                     metadata={"type": "driver", "name": "Lando Norris"})]
+    r = count_wins("cuantas carreras gano Verstappen en 2026", docs)
+    assert "Max Verstappen gano 1 carrera en 2026" in r, r
+    assert "Datos indexados hasta el Mexico City Grand Prix, 2026-11-01." in r, r
+    r = count_wins("cuantas carreras gano Norris en 2025", docs)
+    assert "Lando Norris gano 1 carrera en 2025" in r, r
+    assert "Datos indexados" not in r, r
+
+
+def test_recuento_cero_real_en_temporada_cubierta():
+    # Un piloto sin victorias en una temporada SI cubierta es un cero
+    # medido, no ausencia de datos: la frase lo afirma sin ambiguedad.
+    from rag import count_wins
+
+    docs = [Document(id="r1", text="El Bahrain Grand Prix de la temporada 2026 se disputo el 2026-03-08. Gano Max Verstappen con Red Bull en un tiempo de 1:30:00.000.",
+                     metadata={"type": "race", "season": 2026}),
+            Document(id="d1", text="Max Verstappen es un piloto.",
+                     metadata={"type": "driver", "name": "Max Verstappen"}),
+            Document(id="d2", text="Fernando Alonso es un piloto.",
+                     metadata={"type": "driver", "name": "Fernando Alonso"})]
+    r = count_wins("cuantas carreras gano Alonso en 2026", docs)
+    assert r and "Fernando Alonso no gano ninguna carrera en 2026" in r, r
+    assert "No tengo carreras indexadas" not in r, r
+
+
+def test_recuento_con_actualidad_no_duplica_la_nota():
+    # Recuento + palabras de actualidad: la nota de cobertura sale una
+    # sola vez (la pone el recuento y ask() no la repite).
+    from rag import BM25Index, corpus_coverage
+
+    docs = [Document(id="r1", text="El Mexico City Grand Prix de la temporada 2026 se disputo el 2026-11-01. Gano Max Verstappen con Red Bull en un tiempo de 1:40:00.000.",
+                     metadata={"type": "race", "season": 2026}),
+            Document(id="d1", text="Max Verstappen es un piloto.",
+                     metadata={"type": "driver", "name": "Max Verstappen"})]
+    r = F1Rag.__new__(F1Rag)
+    r.documents = docs
+    r.index = BM25Index(docs)
+    r.coverage = corpus_coverage(docs)
+    a = r.ask("cuantas carreras gano Verstappen en la ultima temporada")
+    assert a["answer"].count("Datos indexados hasta el") == 1, a["answer"]
 
 
 if __name__ == "__main__":
