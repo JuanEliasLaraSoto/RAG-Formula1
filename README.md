@@ -43,7 +43,12 @@ pregunta ──> recuperacion (BM25 o embeddings) ──> fragmentos relevantes 
      tiene McLaren en 2025") se responden con el numero calculado de las
      carreras del corpus, con la lista de grandes premios si son pocas;
      sin ano, el recuento abarca todas las temporadas de los datos y lo
-     dice. Ademas, el top-k es variado por construccion: como mucho
+     dice. Si el ano pedido no tiene carreras indexadas, la respuesta lo
+     dice como ausencia de datos (y hasta que temporada llega la base),
+     no como un cero: el cero se reserva para temporadas cubiertas. Y si
+     el recuento toca la ultima temporada del corpus, que puede ir
+     incompleta, declara su cobertura aunque la pregunta no hable de
+     actualidad. Ademas, el top-k es variado por construccion: como mucho
      2 documentos del mismo tipo y temporada, para que una consulta amplia
      no devuelva la misma plantilla repetida (`RAG_DIVERSIFY=off` o
      `--no-diversify` lo desactivan).
