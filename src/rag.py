@@ -171,7 +171,7 @@ def corpus_coverage(documents: list) -> dict | None:
 _RACE_WIN_RE = re.compile(r"Gano (.+?) con (.+?) en un tiempo")
 
 
-def count_wins(question: str, documents: list) -> str | None:
+def count_wins(question: str, documents: list, coverage: dict | None = None) -> str | None:
     """Respuesta calculada a "cuantas carreras/victorias gano X [en <ano>]".
 
     Cuenta las carreras del corpus ganadas por ese piloto ("Gano <nombre>")
@@ -179,6 +179,12 @@ def count_wins(question: str, documents: list) -> str | None:
     consulta, y lo dice en una frase; el detalle lo dan los fragmentos.
     Devuelve None si la consulta no es de recuento o el piloto/equipo es
     ambiguo (misma regla que con Kimi: sin contexto no se fuerza).
+
+    Una temporada pedida sin carreras indexadas es ausencia de datos, no
+    un cero: la respuesta dice que faltan esos datos y hasta donde llega
+    la base. Y cuando el recuento toca la ultima temporada del corpus,
+    que puede ir incompleta, declara la cobertura (ultima carrera y fecha)
+    aunque la pregunta no use palabras de actualidad.
     """
     if not re.search(r"\bcuant[ao]s?\b", normalize(question)):
         return None
@@ -221,12 +227,26 @@ def count_wins(question: str, documents: list) -> str | None:
     else:
         return None
 
+    coverage = coverage if coverage is not None else corpus_coverage(documents)
     years = extract_years(question)
     recency = has_recency_intent(question)
     seasons = sorted({str(d.metadata.get("season")) for d in documents
                       if d.metadata.get("type") == "race"})
     if not years and recency and seasons:
         years = {seasons[-1]}
+    # Temporadas pedidas sin carreras indexadas: ausencia de datos.
+    cubiertas = years & set(seasons)
+    ausentes = years - set(seasons)
+    if years and not cubiertas:
+        msg = (f"No tengo carreras indexadas de "
+               f"{' y '.join(sorted(years))} en los datos")
+        if seasons:
+            msg += f": la base llega hasta la temporada {seasons[-1]}"
+        if coverage:
+            msg += (f" (ultima carrera indexada: "
+                    f"{coverage['ultima_carrera']}, {coverage['fecha']})")
+        return msg + "."
+    years = cubiertas
     wins = []
     for d in documents:
         if d.metadata.get("type") != "race":
@@ -255,11 +275,20 @@ def count_wins(question: str, documents: list) -> str | None:
         scope = "en los datos"
     n = len(wins)
     if n == 0:
-        return f"Segun los datos indexados, {entity} no gano ninguna carrera {scope}."
-    lista = ", ".join(gp for _, gp in wins[:8])
-    sufijo = f": {lista}" if n <= 8 else ""
-    return (f"Segun los datos indexados, {entity} gano {n} "
-            f"carrera{'s' if n != 1 else ''} {scope}{sufijo}.")
+        msg = f"Segun los datos indexados, {entity} no gano ninguna carrera {scope}."
+    else:
+        lista = ", ".join(gp for _, gp in wins[:8])
+        sufijo = f": {lista}" if n <= 8 else ""
+        msg = (f"Segun los datos indexados, {entity} gano {n} "
+               f"carrera{'s' if n != 1 else ''} {scope}{sufijo}.")
+    if ausentes:
+        msg += f" (sin carreras indexadas de {' y '.join(sorted(ausentes))})"
+    # Si el recuento toca la ultima temporada del corpus, esa temporada
+    # puede ir incompleta: la respuesta declara hasta que carrera llega.
+    if coverage and seasons and (not years or seasons[-1] in years):
+        msg += (f"\n\n(Datos indexados hasta el "
+                f"{coverage['ultima_carrera']}, {coverage['fecha']}.)")
+    return msg
 
 
 def diversify_enabled(explicit: bool | None) -> bool:
@@ -645,7 +674,7 @@ class F1Rag:
                 "answer": "No encontre nada relevante en la base de conocimiento.",
                 "sources": [],
             }
-        counting = count_wins(question, self.documents)
+        counting = count_wins(question, self.documents, coverage=self.coverage)
         prompt = build_prompt(question, results)
         if os.environ.get("OPENAI_API_KEY"):
             if counting:
@@ -659,9 +688,11 @@ class F1Rag:
             # Las preguntas de actualidad se responden con los datos
             # indexados, que pueden ir por detras del calendario real:
             # la respuesta dice hasta que carrera llegan.
-            answer += (f"\n\n(Datos indexados hasta el "
-                       f"{self.coverage['ultima_carrera']}, "
-                       f"{self.coverage['fecha']}.)")
+            nota = (f"(Datos indexados hasta el "
+                    f"{self.coverage['ultima_carrera']}, "
+                    f"{self.coverage['fecha']}.)")
+            if nota not in answer:  # el recuento ya la pudo incluir
+                answer += "\n\n" + nota
         return {
             "answer": answer,
             "sources": [
