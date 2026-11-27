@@ -731,6 +731,104 @@ def test_recuento_con_actualidad_no_duplica_la_nota():
     assert a["answer"].count("Datos indexados hasta el") == 1, a["answer"]
 
 
+def test_puntos_y_posicion_piloto():
+    # "cuantos puntos tiene X" / "en que posicion va X" responde con la
+    # clasificacion calculada de los documentos standing.
+    from rag import standing_lookup
+
+    docs = [Document(id="s1", text="En el campeonato de pilotos 2026, Lando Norris ocupa la posicion 5 con 264 puntos y 3 victorias tras la carrera 21 de 23 (Las Vegas Grand Prix, 2026-11-22), a fecha de 2026-11-25. La temporada aun esta en curso.",
+                     metadata={"type": "standing", "season": 2026}),
+            Document(id="r1", text="El Las Vegas Grand Prix de la temporada 2026 se disputo el 2026-11-22. Gano Max Verstappen con Red Bull en un tiempo de 1:27:39.624.",
+                     metadata={"type": "race", "season": 2026}),
+            Document(id="d1", text="Lando Norris es un piloto.",
+                     metadata={"type": "driver", "name": "Lando Norris"}),
+            Document(id="d2", text="Max Verstappen es un piloto.",
+                     metadata={"type": "driver", "name": "Max Verstappen"})]
+    r = standing_lookup("cuantos puntos tiene Norris en 2026", docs)
+    assert r and "Lando Norris ocupa la posicion 5" in r and "264 puntos" in r, r
+    # Sin ano se usa la temporada mas reciente de los datos, con cobertura.
+    r = standing_lookup("en que posicion va Norris", docs)
+    assert r and "posicion 5" in r and "2026" in r, r
+    assert "Datos indexados hasta el Las Vegas Grand Prix, 2026-11-22." in r, r
+    # Piloto sin fila en la clasificacion: ausencia en los datos, no cero.
+    r = standing_lookup("cuantos puntos tiene Verstappen en 2026", docs)
+    assert r and "no aparece en la clasificacion" in r, r
+
+
+def test_puntos_temporada_sin_datos_y_temporada_cerrada():
+    # Una temporada sin clasificacion indexada es ausencia de datos; una
+    # temporada cerrada responde en pasado y sin nota de cobertura.
+    from rag import standing_lookup
+
+    docs = [Document(id="s1", text="En el campeonato de pilotos 2025, Lando Norris termino en posicion 1 con 423 puntos y 7 victorias.",
+                     metadata={"type": "standing", "season": 2025}),
+            Document(id="s2", text="En el campeonato de pilotos 2026, Max Verstappen ocupa la posicion 1 con 400 puntos y 9 victorias tras la carrera 21 de 23 (Las Vegas Grand Prix, 2026-11-22), a fecha de 2026-11-25. La temporada aun esta en curso.",
+                     metadata={"type": "standing", "season": 2026}),
+            Document(id="r1", text="El Abu Dhabi Grand Prix de la temporada 2025 se disputo el 2025-12-07. Gano Lando Norris con McLaren en un tiempo de 1:25:00.000.",
+                     metadata={"type": "race", "season": 2025}),
+            Document(id="r2", text="El Las Vegas Grand Prix de la temporada 2026 se disputo el 2026-11-22. Gano Max Verstappen con Red Bull en un tiempo de 1:27:39.624.",
+                     metadata={"type": "race", "season": 2026}),
+            Document(id="d1", text="Lando Norris es un piloto.",
+                     metadata={"type": "driver", "name": "Lando Norris"}),
+            Document(id="d2", text="Max Verstappen es un piloto.",
+                     metadata={"type": "driver", "name": "Max Verstappen"})]
+    r = standing_lookup("cuantos puntos tiene Norris en 2027", docs)
+    assert r and "No tengo clasificacion indexada de 2027" in r, r
+    assert "2026" in r, r  # dice hasta donde llega la base
+    r = standing_lookup("en que posicion quedo Norris en 2025", docs)
+    assert r and "termino en la posicion 1" in r, r
+    assert "Datos indexados" not in r, r  # temporada cerrada: sin nota
+
+
+def test_puntos_apodos_y_ambiguos():
+    # Los apodos valen ("Checo") y los ambiguos no se fuerzan ("Kimi").
+    from rag import standing_lookup
+
+    docs = [Document(id="s1", text="En el campeonato de pilotos 2023, Sergio Perez termino en posicion 2 con 285 puntos y 2 victorias.",
+                     metadata={"type": "standing", "season": 2023}),
+            Document(id="r1", text="El Abu Dhabi Grand Prix de la temporada 2023 se disputo el 2023-11-26. Gano Max Verstappen con Red Bull en un tiempo de 1:27:00.000.",
+                     metadata={"type": "race", "season": 2023}),
+            Document(id="d1", text="Sergio Perez es un piloto.", metadata={"type": "driver", "name": "Sergio Perez"}),
+            Document(id="d2", text="Kimi Raikkonen es un piloto.", metadata={"type": "driver", "name": "Kimi Raikkonen"}),
+            Document(id="d3", text="Andrea Kimi Antonelli es un piloto.", metadata={"type": "driver", "name": "Andrea Kimi Antonelli"})]
+    r = standing_lookup("cuantos puntos tiene Checo en 2023", docs)
+    assert r and "Sergio Perez termino en la posicion 2" in r and "285 puntos" in r, r
+    assert standing_lookup("cuantos puntos tiene Kimi en 2023", docs) is None
+    # Una consulta sin piloto claro no se calcula.
+    assert standing_lookup("cuantos puntos tiene el equipo", docs) is None
+
+
+def test_puntos_en_datos_reales():
+    real = DATA.parent / "f1_data.jsonl"
+    if not real.exists():
+        return
+    import re as _re
+
+    from rag import load_documents
+    docs = load_documents(real)
+    # Esperado calculado del corpus: la fila de Norris de la ultima temporada.
+    temporadas = sorted(str(d.metadata.get("season")) for d in docs
+                        if d.metadata.get("type") == "standing")
+    ultima = temporadas[-1]
+    esperado = None
+    for d in docs:
+        if d.metadata.get("type") == "standing" and str(d.metadata.get("season")) == ultima:
+            m = _re.search(r", Lando Norris (ocupa la posicion|termino en posicion) (\d+) con ([\d.]+) puntos", d.text)
+            if m:
+                esperado = m
+                break
+    assert esperado is not None, "falta la fila de Norris en el corpus"
+    rag = F1Rag(real)
+    a = rag.ask("cuantos puntos tiene Norris")
+    assert f"posicion {esperado.group(2)}" in a["answer"], a["answer"][:300]
+    assert f"{esperado.group(3)} puntos" in a["answer"], a["answer"][:300]
+    # La ultima temporada declara cobertura una sola vez.
+    assert a["answer"].count("Datos indexados hasta el") == 1, a["answer"][:300]
+    # Y el recuento sigue funcionando igual (no hay confusion de intentos).
+    a = rag.ask("cuantas carreras gano Norris en 2025")
+    assert "puntos" not in a["answer"].split("\n")[0], a["answer"][:300]
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:
