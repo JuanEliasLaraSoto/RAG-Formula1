@@ -168,6 +168,49 @@ def corpus_coverage(documents: list) -> dict | None:
     return {"ultima_carrera": nombre, "fecha": fecha}
 
 
+def _resolve_entity(question: str, documents: list) -> tuple:
+    """Piloto o equipo unico al que se refiere la consulta.
+
+    Los apodos valen ("Checo" es Sergio Perez); un apellido compartido por
+    varios pilotos no se fuerza (misma regla que con Kimi: sin contexto no
+    se elige). Devuelve (nombre, es_equipo) o (None, False) si no hay un
+    referente claro. Lo usan las respuestas calculadas (count_wins,
+    standing_lookup).
+    """
+    q_tokens = set(tokenize(question))
+    # Los apodos valen tambien para calcular ("cuantas carreras gano Checo").
+    expanded = set(q_tokens)
+    for t in q_tokens:
+        expanded.update(ALIASES.get(t, ()))
+
+    drivers = {d.metadata["name"] for d in documents
+               if d.metadata.get("type") == "driver" and d.metadata.get("name")}
+    teams = {d.metadata["name"] for d in documents
+             if d.metadata.get("type") in ("constructor", "team") and d.metadata.get("name")}
+
+    def ntok(name: str) -> set[str]:
+        return set(tokenize(name))
+
+    def matches(names: set[str]) -> list[str]:
+        # Coincide si algun token largo del nombre esta en la consulta
+        # (p. ej. el apellido o el nombre del equipo).
+        return sorted(n for n in names
+                      if any(tok in expanded for tok in ntok(n) if len(tok) > 3))
+
+    m_drivers = matches(drivers)
+    m_teams = matches(teams)
+    if len(m_drivers) == 1:
+        return m_drivers[0], False
+    if len(m_drivers) == 0 and len(m_teams) == 1:
+        return m_teams[0], True
+    if len(m_drivers) > 1:
+        # El apellido desempata: "Kimi" toca a dos pilotos, "Antonelli" a uno.
+        by_surname = [n for n in m_drivers if tokenize(n)[-1:] and tokenize(n)[-1] in expanded]
+        if len(by_surname) == 1:
+            return by_surname[0], False
+    return None, False
+
+
 _RACE_WIN_RE = re.compile(r"Gano (.+?) con (.+?) en un tiempo")
 
 
@@ -191,40 +234,8 @@ def count_wins(question: str, documents: list, coverage: dict | None = None) -> 
     q_tokens = set(tokenize(question))
     if "carrera" not in q_tokens and "victoria" not in q_tokens:
         return None
-    # Los apodos valen tambien para contar ("cuantas carreras gano Checo").
-    expanded = set(q_tokens)
-    for t in q_tokens:
-        expanded.update(ALIASES.get(t, ()))
-
-    drivers = {d.metadata["name"] for d in documents
-               if d.metadata.get("type") == "driver" and d.metadata.get("name")}
-    teams = {d.metadata["name"] for d in documents
-             if d.metadata.get("type") in ("constructor", "team") and d.metadata.get("name")}
-
-    def ntok(name: str) -> set[str]:
-        return set(tokenize(name))
-
-    def matches(names: set[str]) -> list[str]:
-        # Coincide si algun token largo del nombre esta en la consulta
-        # (p. ej. el apellido o el nombre del equipo).
-        return sorted(n for n in names
-                      if any(tok in expanded for tok in ntok(n) if len(tok) > 3))
-
-    m_drivers = matches(drivers)
-    m_teams = matches(teams)
-    entity, is_team = None, False
-    if len(m_drivers) == 1:
-        entity = m_drivers[0]
-    elif len(m_drivers) == 0 and len(m_teams) == 1:
-        entity, is_team = m_teams[0], True
-    elif len(m_drivers) > 1:
-        # El apellido desempata: "Kimi" toca a dos pilotos, "Antonelli" a uno.
-        by_surname = [n for n in m_drivers if tokenize(n)[-1:] and tokenize(n)[-1] in expanded]
-        if len(by_surname) == 1:
-            entity = by_surname[0]
-        else:
-            return None
-    else:
+    entity, is_team = _resolve_entity(question, documents)
+    if entity is None:
         return None
 
     coverage = coverage if coverage is not None else corpus_coverage(documents)
@@ -258,7 +269,8 @@ def count_wins(question: str, documents: list, coverage: dict | None = None) -> 
             continue
         winner, team = m.group(1), m.group(2)
         if is_team:
-            hit = ntok(team) <= ntok(entity) or ntok(entity) <= ntok(team)
+            tq, te = set(tokenize(team)), set(tokenize(entity))
+            hit = tq <= te or te <= tq
         else:
             hit = winner == entity
         if hit:
@@ -286,6 +298,89 @@ def count_wins(question: str, documents: list, coverage: dict | None = None) -> 
     # Si el recuento toca la ultima temporada del corpus, esa temporada
     # puede ir incompleta: la respuesta declara hasta que carrera llega.
     if coverage and seasons and (not years or seasons[-1] in years):
+        msg += (f"\n\n(Datos indexados hasta el "
+                f"{coverage['ultima_carrera']}, {coverage['fecha']}.)")
+    return msg
+
+
+_STANDING_RE = re.compile(
+    r"En el campeonato de pilotos (\d{4}), (.+?) "
+    r"(ocupa la posicion|termino en posicion) (\d+) con ([\d.]+) puntos"
+    r"(?: y (\d+) victorias)?")
+
+
+def standing_lookup(question: str, documents: list,
+                    coverage: dict | None = None) -> str | None:
+    """Respuesta calculada a "cuantos puntos tiene X" / "en que posicion va X".
+
+    Lee la clasificacion indexada (documentos tipo standing, uno por piloto
+    y temporada) y responde con la posicion, los puntos y las victorias de
+    ese piloto; el detalle lo dan los fragmentos. Devuelve None si la
+    consulta no es de puntos/posicion o el piloto es ambiguo (misma regla
+    que con Kimi: sin contexto no se fuerza); los equipos no tienen
+    clasificacion indexada y caen al camino normal de busqueda.
+
+    Sin ano se responde con la temporada mas reciente de los datos (una
+    clasificacion es una foto por temporada, no un acumulado). Una
+    temporada pedida sin clasificacion indexada es ausencia de datos, y
+    cuando la consulta toca la ultima temporada del corpus, que puede ir
+    incompleta, la respuesta declara la cobertura (ultima carrera y fecha)
+    aunque no use palabras de actualidad.
+    """
+    q = normalize(question)
+    q_tokens = set(tokenize(question))
+    puntos = bool(re.search(r"\bcuant[ao]s?\b", q)) and "punto" in q_tokens
+    posicion = "posicion" in q_tokens or "puesto" in q_tokens
+    if not puntos and not posicion:
+        return None
+    entity, is_team = _resolve_entity(question, documents)
+    if entity is None or is_team:
+        return None
+
+    coverage = coverage if coverage is not None else corpus_coverage(documents)
+    seasons = sorted({str(d.metadata.get("season")) for d in documents
+                      if d.metadata.get("type") == "standing"})
+    if not seasons:
+        return None
+    years = extract_years(question)
+    cubiertas = years & set(seasons)
+    if years and not cubiertas:
+        msg = (f"No tengo clasificacion indexada de "
+               f"{' y '.join(sorted(years))} en los datos")
+        msg += f": la base llega hasta la temporada {seasons[-1]}"
+        if coverage:
+            msg += (f" (ultima carrera indexada: "
+                    f"{coverage['ultima_carrera']}, {coverage['fecha']})")
+        return msg + "."
+    # Sin ano, la clasificacion que interesa es la mas reciente de los
+    # datos; con varios anos, la mas reciente de los pedidos.
+    year = max(cubiertas) if cubiertas else seasons[-1]
+
+    row = None
+    for d in documents:
+        if d.metadata.get("type") != "standing":
+            continue
+        if str(d.metadata.get("season", "")) != year:
+            continue
+        m = _STANDING_RE.search(d.text)
+        if m and m.group(2) == entity:
+            row = m
+            break
+    if row is None:
+        # Piloto conocido sin fila en la clasificacion de esa temporada:
+        # ausencia en los datos, no un cero de puntos.
+        return (f"Segun los datos indexados, {entity} no aparece en la "
+                f"clasificacion de pilotos de {year}.")
+
+    en_curso = row.group(3).startswith("ocupa")
+    pos, pts, wins = row.group(4), row.group(5), row.group(6)
+    verbo = "ocupa" if en_curso else "termino en"
+    msg = (f"Segun los datos indexados, {entity} {verbo} la posicion {pos} "
+           f"del campeonato de pilotos de {year} con {pts} puntos")
+    if wins and wins != "0":
+        msg += f" y {wins} victorias"
+    msg += "."
+    if coverage and year == seasons[-1]:
         msg += (f"\n\n(Datos indexados hasta el "
                 f"{coverage['ultima_carrera']}, {coverage['fecha']}.)")
     return msg
@@ -675,15 +770,17 @@ class F1Rag:
                 "sources": [],
             }
         counting = count_wins(question, self.documents, coverage=self.coverage)
+        standing = standing_lookup(question, self.documents, coverage=self.coverage)
+        calculado = counting or standing  # una consulta no dispara ambos
         prompt = build_prompt(question, results)
         if os.environ.get("OPENAI_API_KEY"):
-            if counting:
-                prompt += f"\n\nDato calculado de los documentos (usalo tal cual): {counting}"
+            if calculado:
+                prompt += f"\n\nDato calculado de los documentos (usalo tal cual): {calculado}"
             answer = generate_with_llm(prompt)
         else:
             answer = extractive_answer(results)
-            if counting:
-                answer = counting + "\n\n" + answer
+            if calculado:
+                answer = calculado + "\n\n" + answer
         if self.coverage and has_recency_intent(question):
             # Las preguntas de actualidad se responden con los datos
             # indexados, que pueden ir por detras del calendario real:
