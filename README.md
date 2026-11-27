@@ -48,7 +48,12 @@ pregunta ──> recuperacion (BM25 o embeddings) ──> fragmentos relevantes 
      no como un cero: el cero se reserva para temporadas cubiertas. Y si
      el recuento toca la ultima temporada del corpus, que puede ir
      incompleta, declara su cobertura aunque la pregunta no hable de
-     actualidad. Ademas, el top-k es variado por construccion: como mucho
+     actualidad. Las preguntas de puntos y posicion ("cuantos puntos
+     tiene Norris", "en que posicion va Verstappen en 2026") se
+     responden igual de calculadas, leyendo la clasificacion indexada:
+     sin ano se usa la temporada mas reciente de los datos, una
+     temporada sin clasificacion es ausencia de datos y la ultima
+     temporada declara su cobertura. Ademas, el top-k es variado por construccion: como mucho
      2 documentos del mismo tipo y temporada, para que una consulta amplia
      no devuelva la misma plantilla repetida (`RAG_DIVERSIFY=off` o
      `--no-diversify` lo desactivan).
